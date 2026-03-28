@@ -20,10 +20,13 @@ See requirements.txt.  Set GEMINI_API_KEY in a .env file (see .env.example).
 
 Windows-specific notes
 ----------------------
-* DPI Awareness: On high-DPI displays Windows scales logical pixels differently
-  from physical pixels.  PyQt6 calls SetProcessDpiAwarenessContext at startup
-  (DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2), so every coordinate we receive
-  is in physical pixels and every mss capture matches them exactly.
+* DPI Awareness: Python 3.8+ embeds an application manifest that declares
+  DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 before any user code runs.  Every
+  coordinate is therefore in physical pixels and every mss capture matches them
+  exactly.  Because the manifest already owns the DPI setting, Qt6's attempt to
+  call SetProcessDpiAwarenessContext at QApplication startup is rejected by
+  Windows (ERROR_ACCESS_DENIED).  The resulting ``qt.qpa.window`` warning is
+  suppressed via QT_LOGGING_RULES in main() since the DPI behaviour is correct.
 * Always-on-top: Qt.WindowType.WindowStaysOnTopHint combined with
   Qt.WindowType.Tool prevents the tooltip from stealing focus or appearing in
   the taskbar.
@@ -529,6 +532,13 @@ class MainController(QObject):
 # ===========================================================================
 def main() -> None:
     """Create the Qt application and run the event loop."""
+    if sys.platform == "win32":
+        # Python 3.8+ embeds a manifest that declares
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, so Windows rejects Qt's
+        # own SetProcessDpiAwarenessContext call with ERROR_ACCESS_DENIED.  The
+        # DPI behaviour is already correct; suppress the spurious warning.
+        os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.window.warning=false")
+
     app = QApplication(sys.argv)
     # Prevent the application from quitting when the tooltip is closed.
     app.setQuitOnLastWindowClosed(False)
