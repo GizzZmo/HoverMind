@@ -78,6 +78,16 @@ TOOLTIP_OFFSET_Y: int = 20       # vertical offset from the cursor tip
 HOTKEY_KEYS: frozenset = frozenset(
     {pynput_keyboard.Key.alt, pynput_keyboard.Key.shift}
 )
+# pynput reports left/right variants (e.g. Key.alt_l) rather than the generic
+# Key.alt / Key.shift on most platforms.  Normalize them so the hotkey check
+# works regardless of which physical key the user presses.
+_KEY_NORMALIZE: dict[pynput_keyboard.Key, pynput_keyboard.Key] = {
+    pynput_keyboard.Key.alt_l: pynput_keyboard.Key.alt,
+    pynput_keyboard.Key.alt_r: pynput_keyboard.Key.alt,
+    pynput_keyboard.Key.alt_gr: pynput_keyboard.Key.alt,
+    pynput_keyboard.Key.shift_l: pynput_keyboard.Key.shift,
+    pynput_keyboard.Key.shift_r: pynput_keyboard.Key.shift,
+}
 AI_PROMPT: str = (
     "Briefly explain what the user is pointing at in the center of this "
     "image. If it's code, explain it. If it's an image, describe it. If "
@@ -450,6 +460,7 @@ class MainController(QObject):
     # ------------------------------------------------------------------
 
     def _on_key_press(self, key: pynput_keyboard.Key) -> None:
+        key = _KEY_NORMALIZE.get(key, key)
         self._pressed.add(key)
         was_active = self._hotkey_active
         self._hotkey_active = HOTKEY_KEYS.issubset(self._pressed)
@@ -457,6 +468,7 @@ class MainController(QObject):
             logger.debug("Hotkey activated.")
 
     def _on_key_release(self, key: pynput_keyboard.Key) -> None:
+        key = _KEY_NORMALIZE.get(key, key)
         self._pressed.discard(key)
         if not HOTKEY_KEYS.issubset(self._pressed):
             if self._hotkey_active:
