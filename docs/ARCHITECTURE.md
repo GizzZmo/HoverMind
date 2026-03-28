@@ -100,7 +100,7 @@ FloatingTooltip.hide_tooltip()
 
 ### `ScreenCapture`
 
-**Purpose:** Grab a square pixel region centred on the cursor.
+**Purpose:** Grab a square pixel region centered on the cursor.
 
 **Key parameters:**
 - `snippet_size` (default `500`) — side length in physical pixels.
