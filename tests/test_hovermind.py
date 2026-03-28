@@ -27,7 +27,12 @@ def _make_pynput_stub():
 
     class _Key:
         alt = "alt"
+        alt_l = "alt_l"
+        alt_r = "alt_r"
+        alt_gr = "alt_gr"
         shift = "shift"
+        shift_l = "shift_l"
+        shift_r = "shift_r"
 
     class _Listener:
         def __init__(self, on_press=None, on_release=None):
@@ -492,6 +497,37 @@ class TestMainController(unittest.TestCase):
         self.assertTrue(ctrl._hotkey_active)
         ctrl._on_key_release(pynput_kb.Key.shift)
         self.assertFalse(ctrl._hotkey_active)
+
+    def test_hotkey_activation_with_left_variants(self):
+        """Pressing alt_l + shift_l (the actual events sent by pynput) must activate."""
+        ctrl = self._make_controller()
+        ctrl._on_key_press(pynput_kb.Key.alt_l)
+        self.assertFalse(ctrl._hotkey_active)
+        ctrl._on_key_press(pynput_kb.Key.shift_l)
+        self.assertTrue(ctrl._hotkey_active)
+
+    def test_hotkey_activation_with_right_variants(self):
+        """Pressing alt_r + shift_r must also activate the hotkey."""
+        ctrl = self._make_controller()
+        ctrl._on_key_press(pynput_kb.Key.alt_r)
+        ctrl._on_key_press(pynput_kb.Key.shift_r)
+        self.assertTrue(ctrl._hotkey_active)
+
+    def test_hotkey_deactivation_with_left_variants(self):
+        """Releasing shift_l must deactivate the hotkey."""
+        ctrl = self._make_controller()
+        ctrl._on_key_press(pynput_kb.Key.alt_l)
+        ctrl._on_key_press(pynput_kb.Key.shift_l)
+        self.assertTrue(ctrl._hotkey_active)
+        ctrl._on_key_release(pynput_kb.Key.shift_l)
+        self.assertFalse(ctrl._hotkey_active)
+
+    def test_hotkey_alt_gr_variant(self):
+        """alt_gr should also be treated as alt for the hotkey."""
+        ctrl = self._make_controller()
+        ctrl._on_key_press(pynput_kb.Key.alt_gr)
+        ctrl._on_key_press(pynput_kb.Key.shift_l)
+        self.assertTrue(ctrl._hotkey_active)
 
     def test_stop_does_not_raise(self):
         """stop() must not raise any exceptions."""
