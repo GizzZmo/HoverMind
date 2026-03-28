@@ -43,6 +43,12 @@ HoverMind turns your mouse pointer into a context-aware AI assistant. Hold **Alt
 | **Graceful error handling** | API failures surface as a readable ⚠ message in the tooltip instead of crashing |
 | **Cross-environment tests** | Full unit test suite with mocked dependencies that runs on Linux/macOS CI runners |
 
+### Core pillars at a glance
+
+- **Invisible UI (PyQt6)** — `FloatingTooltip` is a frameless, translucent widget that follows the cursor, stays on top, and avoids stealing focus.
+- **Screen grabber (mss)** — `ScreenCapture.capture_around` snaps a 500×500 px (configurable) DPI-aware image centered on the cursor, clamped to screen bounds.
+- **AI brain (Gemini/OpenAI/Anthropic/Ollama)** — `AIAnalyzer` routes the captured image to the configured provider via `AI_PROVIDER`/`AI_MODEL` and returns the description shown in the tooltip.
+
 ---
 
 ## 🏗️ Architecture
