@@ -629,7 +629,8 @@ class TestAIAnalyzer(unittest.TestCase):
 
     def test_provider_default_is_gemini(self):
         """AIAnalyzer must default to the Gemini provider."""
-        analyzer = hovermind.AIAnalyzer(api_key="fake-key")
+        with patch.dict("os.environ", {}, clear=True):
+            analyzer = hovermind.AIAnalyzer(api_key="fake-key")
         self.assertEqual(analyzer.provider_name, "gemini")
 
     def test_ai_model_env_override(self):
