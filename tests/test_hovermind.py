@@ -634,7 +634,11 @@ class TestAIAnalyzer(unittest.TestCase):
 
     def test_ai_model_env_override(self):
         """AI_MODEL env var must override the provider default."""
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "k", "AI_MODEL": "custom-model"}):
+        with patch.dict(
+            "os.environ",
+            {"GEMINI_API_KEY": "k", "AI_MODEL": "custom-model"},
+            clear=True,
+        ):
             analyzer = hovermind.AIAnalyzer(api_key=None)
         self.assertEqual(analyzer._model_name, "custom-model")
 
