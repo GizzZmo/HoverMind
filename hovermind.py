@@ -21,9 +21,9 @@ See requirements.txt.  Set GEMINI_API_KEY in a .env file (see .env.example).
 Windows-specific notes
 ----------------------
 * DPI Awareness: On high-DPI displays Windows scales logical pixels differently
-  from physical pixels.  We call ctypes SetProcessDpiAwareness(2) at startup
-  so that every coordinate we receive is in physical pixels and every mss
-  capture matches them exactly.
+  from physical pixels.  PyQt6 calls SetProcessDpiAwarenessContext at startup
+  (DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2), so every coordinate we receive
+  is in physical pixels and every mss capture matches them exactly.
 * Always-on-top: Qt.WindowType.WindowStaysOnTopHint combined with
   Qt.WindowType.Tool prevents the tooltip from stealing focus or appearing in
   the taskbar.
@@ -39,21 +39,6 @@ import os
 import sys
 import threading
 from typing import Optional
-
-# ---------------------------------------------------------------------------
-# Windows DPI awareness – must be set *before* any Win32 window is created.
-# On non-Windows platforms this is silently skipped.
-# ---------------------------------------------------------------------------
-if sys.platform == "win32":
-    try:
-        import ctypes
-
-        # PROCESS_PER_MONITOR_DPI_AWARE (value 2) is the highest awareness
-        # level available via SetProcessDpiAwareness.  It ensures that all
-        # GetCursorPos / mss coordinates are in physical (raw) pixels.
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except Exception:  # pragma: no cover – only runs on Windows
-        pass
 
 # ---------------------------------------------------------------------------
 # Third-party imports
