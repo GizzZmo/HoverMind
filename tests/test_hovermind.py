@@ -611,7 +611,10 @@ class TestAIAnalyzer(unittest.TestCase):
 
     def test_analyse_returns_error_string_on_exception(self):
         """analyse() must return an error string (not raise) on API failure."""
-        analyzer = hovermind.AIAnalyzer(api_key="fake-key-for-testing")
+        analyzer = hovermind.AIAnalyzer(
+            api_key="fake-key-for-testing",
+            provider="gemini",
+        )
         # Make the internal client raise an exception
         analyzer._impl._client.models.generate_content = MagicMock(
             side_effect=RuntimeError("network error")
