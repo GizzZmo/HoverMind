@@ -1,0 +1,6 @@
+PyQt6>=6.6.0
+mss>=9.0.1
+Pillow>=10.0.0
+google-genai>=1.0.0
+pynput>=1.7.7
+python-dotenv>=1.0.0
