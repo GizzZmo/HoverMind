@@ -11,7 +11,7 @@ HoverMind is a single-file Python application (`hovermind.py`) composed of four 
 ```
 hovermind.py
 ├── ScreenCapture       — screenshot acquisition
-├── AIAnalyzer          — Gemini Vision API client
+├── AIAnalyzer          — provider-agnostic facade (Gemini / OpenAI / Anthropic / Ollama)
 ├── FloatingTooltip     — PyQt6 overlay widget
 └── MainController      — orchestration + lifecycle
 ```
@@ -119,18 +119,28 @@ FloatingTooltip.hide_tooltip()
 
 ### `AIAnalyzer`
 
-**Purpose:** Send a screenshot to the Google Gemini Vision API and return a human-readable explanation.
+**Purpose:** Provide a stable interface (`analyse(image_bytes) -> str`) while delegating to one of several AI backends selected via configuration.
 
-**Key parameters:**
-- `api_key` — resolved from the constructor argument, then `GEMINI_API_KEY` env var. Raises `ValueError` if neither is set.
-- `model_name` — defaults to `"gemini-1.5-flash"` (good speed/quality trade-off for vision tasks).
+**Provider resolution:**
 
-**How it works:**
-1. Constructs a `google.genai.Client` with the provided key.
-2. Wraps the raw PNG bytes in a `genai_types.Part.from_bytes(data, mime_type="image/png")` object.
-3. Calls `client.models.generate_content(model, [image_part, AI_PROMPT])`.
-4. Returns `response.text.strip()`.
-5. Any exception is caught, logged, and returned as a `"⚠ AI analysis failed: …"` string so the UI always has something to display.
+| Provider | Env vars | Default model |
+|----------|----------|---------------|
+| `gemini` (default) | `GEMINI_API_KEY` | `gemini-1.5-flash` |
+| `openai` | `OPENAI_API_KEY` | `gpt-4o` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-3-5-sonnet-latest` |
+| `ollama` | none (local daemon) | `llava` |
+
+- `AI_PROVIDER` chooses which backend to use unless a provider is passed directly to `AIAnalyzer` / `MainController`.
+- `AI_MODEL` overrides the provider's default model for all providers.
+
+**How it works (per provider):**
+
+- **Gemini:** Uses `google.genai` to call `client.models.generate_content([...image_part, AI_PROMPT])`.
+- **OpenAI GPT-4o Vision:** Base64-encodes the image and submits it to `chat.completions.create` with an image URL payload.
+- **Anthropic Claude Vision:** Sends base64 image content via `messages.create` together with `AI_PROMPT`.
+- **Ollama:** POSTs to the local Ollama HTTP API (`/api/generate`) with the encoded image and prompt.
+
+Every provider catches exceptions and returns a user-visible `"⚠ AI analysis failed: …"` string so the UI always has something meaningful to display.
 
 **`AI_PROMPT` constant:**
 ```python

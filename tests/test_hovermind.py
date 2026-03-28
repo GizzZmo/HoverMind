@@ -120,6 +120,81 @@ def _make_genai_stub():
     return google_mod, genai_mod, types_mod
 
 
+def _make_openai_stub():
+    """Return a minimal stub for the openai module."""
+    mod = types.ModuleType("openai")
+
+    class _Message:
+        def __init__(self):
+            self.content = "openai vision response"
+
+    class _Choice:
+        def __init__(self):
+            self.message = _Message()
+
+    class _ChatCompletions:
+        def create(self, *args, **kwargs):
+            return types.SimpleNamespace(choices=[_Choice()])
+
+    class _Chat:
+        def __init__(self):
+            self.completions = _ChatCompletions()
+
+    class OpenAI:
+        def __init__(self, api_key=None):
+            self.api_key = api_key
+            self.chat = _Chat()
+
+    mod.OpenAI = OpenAI
+    return mod
+
+
+def _make_anthropic_stub():
+    """Return a minimal stub for the anthropic module."""
+    mod = types.ModuleType("anthropic")
+
+    class _ResponsePart:
+        def __init__(self, text):
+            self.text = text
+
+    class _Messages:
+        def create(self, *args, **kwargs):
+            return types.SimpleNamespace(content=[_ResponsePart("anthropic vision response")])
+
+    class Anthropic:
+        def __init__(self, api_key=None):
+            self.api_key = api_key
+            self.messages = _Messages()
+
+    mod.Anthropic = Anthropic
+    return mod
+
+
+def _make_requests_stub():
+    """Return a minimal stub for the requests module."""
+    mod = types.ModuleType("requests")
+
+    class _Response:
+        def __init__(self):
+            self._json = {"response": "ollama vision response"}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._json
+
+        @property
+        def status_code(self):
+            return 200
+
+    def post(url, **kwargs):
+        return _Response()
+
+    mod.post = post
+    return mod
+
+
 def _make_pyqt6_stub():
     """Return a minimal stub for PyQt6 so tests run without a display."""
     pyqt6 = types.ModuleType("PyQt6")
@@ -443,6 +518,15 @@ sys.modules.setdefault("google", google_mod)
 sys.modules.setdefault("google.genai", genai_mod)
 sys.modules.setdefault("google.genai.types", genai_types_mod)
 
+openai_mod = _make_openai_stub()
+sys.modules.setdefault("openai", openai_mod)
+
+anthropic_mod = _make_anthropic_stub()
+sys.modules.setdefault("anthropic", anthropic_mod)
+
+requests_mod = _make_requests_stub()
+sys.modules.setdefault("requests", requests_mod)
+
 pyqt6_mod, qt_core, qt_widgets, qt_gui = _make_pyqt6_stub()
 sys.modules.setdefault("PyQt6", pyqt6_mod)
 sys.modules.setdefault("PyQt6.QtCore", qt_core)
@@ -529,7 +613,7 @@ class TestAIAnalyzer(unittest.TestCase):
         """analyse() must return an error string (not raise) on API failure."""
         analyzer = hovermind.AIAnalyzer(api_key="fake-key-for-testing")
         # Make the internal client raise an exception
-        analyzer._client.models.generate_content = MagicMock(
+        analyzer._impl._client.models.generate_content = MagicMock(
             side_effect=RuntimeError("network error")
         )
         result = analyzer.analyse(b"fake-image-data")
@@ -542,6 +626,43 @@ class TestAIAnalyzer(unittest.TestCase):
             api_key="fake-key", model_name="gemini-1.5-pro"
         )
         self.assertEqual(analyzer._model_name, "gemini-1.5-pro")
+
+    def test_provider_default_is_gemini(self):
+        """AIAnalyzer must default to the Gemini provider."""
+        analyzer = hovermind.AIAnalyzer(api_key="fake-key")
+        self.assertEqual(analyzer.provider_name, "gemini")
+
+    def test_ai_model_env_override(self):
+        """AI_MODEL env var must override the provider default."""
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "k", "AI_MODEL": "custom-model"}):
+            analyzer = hovermind.AIAnalyzer(api_key=None)
+        self.assertEqual(analyzer._model_name, "custom-model")
+
+    def test_openai_provider_selection(self):
+        """AI_PROVIDER=openai must select the OpenAI analyzer."""
+        with patch.dict(
+            "os.environ",
+            {"OPENAI_API_KEY": "ok", "AI_PROVIDER": "openai"},
+            clear=True,
+        ):
+            analyzer = hovermind.AIAnalyzer(api_key=None)
+        self.assertEqual(analyzer.provider_name, "openai")
+        self.assertEqual(analyzer._impl.__class__.__name__, "OpenAIAnalyzer")
+
+    def test_invalid_provider_raises(self):
+        """Unsupported providers must raise ValueError."""
+        with patch.dict(
+            "os.environ",
+            {"AI_PROVIDER": "unknown", "GEMINI_API_KEY": "k"},
+            clear=True,
+        ):
+            with self.assertRaises(ValueError):
+                hovermind.AIAnalyzer(api_key=None)
+
+    def test_ollama_requires_no_key(self):
+        """Ollama provider should not require an API key."""
+        analyzer = hovermind.AIAnalyzer(provider="ollama")
+        self.assertEqual(analyzer.provider_name, "ollama")
 
 
 class TestFloatingTooltip(unittest.TestCase):

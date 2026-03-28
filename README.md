@@ -34,6 +34,7 @@ HoverMind turns your mouse pointer into a context-aware AI assistant. Hold **Alt
 
 | Feature | Details |
 |---------|---------|
+| **Multi-provider AI** | Plug in Google Gemini (default), OpenAI GPT-4o Vision, Anthropic Claude Vision, or local Ollama models via `AI_PROVIDER` / `AI_MODEL` |
 | **Universal vision** | Explain code snippets, UI icons, error messages, foreign-language text, diagrams, photos — anything visible on screen |
 | **Unobtrusive overlay** | Frameless, semi-transparent, always-on-top tooltip that never steals focus or appears in Alt-Tab |
 | **DPI-aware capture** | Calls `SetProcessDpiAwareness(2)` at startup so coordinates are always physical pixels on any monitor scaling |
@@ -65,7 +66,8 @@ HoverMind turns your mouse pointer into a context-aware AI assistant. Hold **Alt
 │                                   │       │ PNG  │  │
 │                                   │  ┌────▼─────┐│  │
 │                                   │  │AIAnalyzer││  │
-│                                   │  │ (Gemini) ││  │
+│                                   │  │ (provider││  │
+│                                   │  │  plug-in)││  │
 │                                   │  └────┬─────┘│  │
 │                                   └───────┼──────┘  │
 │                       Qt signal (text)    │          │
@@ -81,7 +83,7 @@ HoverMind turns your mouse pointer into a context-aware AI assistant. Hold **Alt
 | Class | File | Responsibility |
 |-------|------|----------------|
 | `ScreenCapture` | `hovermind.py` | Grabs a 500×500 px region around the cursor using `mss` (direct Win32 GDI), clamps to screen bounds, converts BGRA→RGB via Pillow |
-| `AIAnalyzer` | `hovermind.py` | Authenticates with the Google Gemini Vision API, submits image bytes with a system prompt, and returns a plain-text explanation |
+| `AIAnalyzer` | `hovermind.py` | Provider-agnostic facade that selects Gemini / OpenAI / Anthropic / Ollama based on `AI_PROVIDER` / `AI_MODEL`; returns a plain-text explanation |
 | `FloatingTooltip` | `hovermind.py` | PyQt6 frameless widget with custom rounded semi-transparent painting, word-wrapped label, and screen-edge clamping |
 | `MainController` | `hovermind.py` | Ties pynput listener → debounce timer → worker thread → Qt signal → tooltip; manages application lifecycle |
 
@@ -95,7 +97,11 @@ For a deeper dive see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 - **Windows 10 or 11** (Linux/macOS supported for development and CI)
 - **Python 3.11 or newer**
-- A **Google Gemini API key** — obtain one free at [Google AI Studio](https://aistudio.google.com/app/apikey)
+- At least one AI credential:
+  - **Google Gemini API key** — obtain at [Google AI Studio](https://aistudio.google.com/app/apikey)
+  - **OpenAI API key** — from [platform.openai.com](https://platform.openai.com/)
+  - **Anthropic API key** — from [console.anthropic.com](https://console.anthropic.com/)
+  - Or a **local Ollama** instance with a multimodal model (e.g. `ollama pull llava`)
 
 ### Installation
 
@@ -122,17 +128,21 @@ For a deeper dive see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
    pip install -r requirements.txt
    ```
 
-4. Configure your API key:
+4. Configure your AI provider:
 
    ```bash
    copy .env.example .env      # Windows
    # cp .env.example .env      # macOS / Linux
    ```
 
-   Open `.env` and replace `your_gemini_api_key_here` with your actual key:
+   Open `.env` and set your provider (defaults to Gemini):
 
    ```
-   GEMINI_API_KEY=AIza...
+   AI_PROVIDER=gemini          # or openai | anthropic | ollama
+   GEMINI_API_KEY=AIza...      # required for Gemini
+   OPENAI_API_KEY=...          # required for OpenAI
+   ANTHROPIC_API_KEY=...       # required for Anthropic
+   # AI_MODEL=gpt-4o-mini      # optional override per provider
    ```
 
 ---
@@ -148,13 +158,19 @@ All runtime behaviour can be tuned via the module-level constants in `hovermind.
 | `TOOLTIP_OFFSET_X` | `20` | Horizontal gap between the cursor tip and the left edge of the tooltip |
 | `TOOLTIP_OFFSET_Y` | `20` | Vertical gap between the cursor tip and the top edge of the tooltip |
 | `HOTKEY_KEYS` | `{Alt, Shift}` | Set of keys that must all be held to activate HoverMind |
-| `AI_PROMPT` | *(see source)* | System prompt sent to Gemini along with every screenshot |
+| `AI_PROMPT` | *(see source)* | System prompt sent to the active provider along with every screenshot |
 
 ### Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GEMINI_API_KEY` | **Yes** | Google Gemini API key. Also accepted as a constructor argument. |
+| `AI_PROVIDER` | No (default `gemini`) | `gemini` \| `openai` \| `anthropic` \| `ollama` |
+| `AI_MODEL` | No | Override the provider's default model |
+| `GEMINI_API_KEY` | Yes (for Gemini) | Google Gemini API key. Also accepted as a constructor argument. |
+| `OPENAI_API_KEY` | Yes (for OpenAI) | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Yes (for Anthropic) | Anthropic API key |
+| `DEBOUNCE_MS` | No | Debounce delay in milliseconds between analyses |
+| `HOVERMIND_LOG_FILE` | No | Optional log file path |
 
 ---
 
@@ -198,10 +214,12 @@ The test suite is designed to run headlessly on any OS (no display, no Windows A
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v
+python -m unittest tests/test_hovermind.py # run the main suite
+# or run all tests
+python -m unittest discover tests
 ```
 
-All external dependencies (`PyQt6`, `pynput`, `mss`, `google-genai`) are fully stubbed so the suite runs in CI without any platform-specific setup.
+All external dependencies (PyQt6, pynput, mss, google-genai, openai, anthropic, requests) are fully stubbed so the suite runs in CI without any platform-specific setup. HoverMind uses the built-in `unittest` runner; pytest is not required.
 
 ### Project structure
 
@@ -223,7 +241,7 @@ HoverMind/
 ### Coding style
 
 - Follow [PEP 8](https://peps.python.org/pep-0008/) with a maximum line length of 100 characters.
-- All public classes and methods must have Google-style docstrings.
+- Public docstrings use NumPy-style sections (`Parameters`, `Returns`) as shown in `hovermind.py`.
 - Keep all application logic in `hovermind.py`; platform stubs belong in tests.
 
 ---

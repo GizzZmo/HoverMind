@@ -36,18 +36,21 @@ Windows-specific notes
 
 from __future__ import annotations
 
+import base64
 import io
 import logging
 import os
 import sys
 import threading
-from typing import Optional
+from abc import ABC, abstractmethod
+from typing import ClassVar, Optional, Type
 
 # ---------------------------------------------------------------------------
 # Third-party imports
 # ---------------------------------------------------------------------------
 import mss
 import mss.tools
+import requests
 from PIL import Image
 from dotenv import load_dotenv
 from google import genai
@@ -103,6 +106,8 @@ AI_PROMPT: str = (
 )
 DEBOUNCE_MS: int = int(os.environ.get("DEBOUNCE_MS", "800"))
 HOVERMIND_LOG_FILE: str = os.environ.get("HOVERMIND_LOG_FILE", "")
+AI_PROVIDER: str = os.environ.get("AI_PROVIDER", "gemini").lower()
+AI_MODEL: str = os.environ.get("AI_MODEL", "")
 
 
 # ---------------------------------------------------------------------------
@@ -216,31 +221,44 @@ class ScreenCapture:
 
 
 # ===========================================================================
-# AIAnalyzer
+# Analyzers
 # ===========================================================================
-class AIAnalyzer:
-    """Sends a screen snippet to the Google Gemini Vision API.
+class AnalyzerBase(ABC):
+    """Abstract base class for all AI provider integrations."""
 
-    The Gemini model receives the image together with a short system prompt
-    asking for a concise explanation of what is visible in the centre.
+    provider_name: ClassVar[str]
+    default_model: ClassVar[str]
 
-    Parameters
-    ----------
-    api_key:
-        Gemini API key.  If *None* the value is read from the ``GEMINI_API_KEY``
-        environment variable (populated via .env by python-dotenv).
-    model_name:
-        Gemini model identifier.  Defaults to ``"gemini-1.5-flash"`` which
-        offers a good balance between speed and vision quality.
-    """
+    def __init__(self, model_name: Optional[str] = None) -> None:
+        provider = getattr(self, "provider_name", None)
+        default_model = getattr(self, "default_model", None)
+        if not provider or not isinstance(provider, str):
+            raise NotImplementedError(
+                "Subclasses must define provider_name."
+            )
+        if not default_model or not isinstance(default_model, str):
+            raise NotImplementedError(
+                "Subclasses must define default_model."
+            )
+        self._model_name = model_name or self.default_model
 
-    _DEFAULT_MODEL = "gemini-1.5-flash"
+    @abstractmethod
+    def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+        """Return a short textual explanation for the given image bytes."""
+
+
+class GeminiAnalyzer(AnalyzerBase):
+    """Google Gemini Vision analyzer."""
+
+    provider_name = "gemini"
+    default_model = "gemini-1.5-flash"
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = _DEFAULT_MODEL,
+        model_name: Optional[str] = None,
     ) -> None:
+        super().__init__(model_name=model_name)
         resolved_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         if not resolved_key:
             raise ValueError(
@@ -248,29 +266,8 @@ class AIAnalyzer:
                 "Add it to your .env file or pass it explicitly."
             )
         self._client = genai.Client(api_key=resolved_key)
-        self._model_name = model_name
-
-    # ------------------------------------------------------------------
-    # Public helpers
-    # ------------------------------------------------------------------
 
     def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
-        """Ask the model to explain what is shown in *image_bytes*.
-
-        Parameters
-        ----------
-        image_bytes:
-            Raw encoded image data (PNG or JPEG).
-        mime_type:
-            MIME type of *image_bytes*.  Must match the actual encoding.
-
-        Returns
-        -------
-        str
-            The model's textual response, stripped of leading/trailing
-            whitespace.  Returns a user-visible error string on failure so
-            the UI always has something meaningful to display.
-        """
         try:
             image_part = genai_types.Part.from_bytes(
                 data=image_bytes,
@@ -284,6 +281,229 @@ class AIAnalyzer:
         except Exception as exc:
             logger.error("Gemini API error: %s", exc)
             return f"⚠ AI analysis failed: {exc}"
+
+
+class OpenAIAnalyzer(AnalyzerBase):
+    """OpenAI GPT-4o Vision analyzer."""
+
+    provider_name = "openai"
+    default_model = "gpt-4o"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ) -> None:
+        super().__init__(model_name=model_name)
+        resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not resolved_key:
+            raise ValueError(
+                "OPENAI_API_KEY is not set. "
+                "Add it to your .env file or pass it explicitly."
+            )
+        from openai import OpenAI  # lazy import so tests can stub
+
+        self._client = OpenAI(api_key=resolved_key)
+
+    def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model_name,
+                messages=[
+                    {"role": "system", "content": AI_PROMPT},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Explain what is shown in this image.",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{encoded}"
+                                },
+                            },
+                        ],
+                    },
+                ],
+            )
+            try:
+                choice = response.choices[0]
+                message = getattr(choice, "message", choice)
+                content = message.content
+            except Exception as exc:
+                logger.error("OpenAI response format error: %s", exc)
+                return "⚠ AI analysis failed: malformed response"
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        maybe_text = part.get("text", "")
+                        if maybe_text:
+                            text_parts.append(str(maybe_text))
+                    elif hasattr(part, "text"):
+                        text_parts.append(str(part.text))
+                    else:
+                        text_parts.append(str(part))
+                text = " ".join(tp for tp in text_parts if tp).strip()
+            else:
+                text = str(content).strip()
+            return text or "⚠ AI analysis returned no text."
+        except Exception as exc:
+            logger.error("OpenAI API error: %s", exc)
+            return f"⚠ AI analysis failed: {exc}"
+
+
+class AnthropicAnalyzer(AnalyzerBase):
+    """Anthropic Claude Vision analyzer."""
+
+    provider_name = "anthropic"
+    default_model = "claude-3-5-sonnet-latest"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ) -> None:
+        super().__init__(model_name=model_name)
+        resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not resolved_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY is not set. "
+                "Add it to your .env file or pass it explicitly."
+            )
+        from anthropic import Anthropic  # lazy import
+
+        self._client = Anthropic(api_key=resolved_key)
+
+    def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        try:
+            response = self._client.messages.create(
+                model=self._model_name,
+                max_tokens=200,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": AI_PROMPT},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime_type,
+                                    "data": encoded,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            )
+            try:
+                content = response.content
+            except Exception as exc:
+                logger.error("Anthropic response format error: %s", exc)
+                return "⚠ AI analysis failed: malformed response"
+            texts = []
+            for part in content:
+                if isinstance(part, dict):
+                    text_val = part.get("text", "")
+                    if text_val:
+                        texts.append(str(text_val))
+                elif hasattr(part, "text"):
+                    texts.append(str(part.text))
+            text = " ".join(t for t in texts if t).strip()
+            return text or "⚠ AI analysis returned no text."
+        except Exception as exc:
+            logger.error("Anthropic API error: %s", exc)
+            return f"⚠ AI analysis failed: {exc}"
+
+
+class OllamaAnalyzer(AnalyzerBase):
+    """Local Ollama multimodal analyzer."""
+
+    provider_name = "ollama"
+    default_model = "llava"
+
+    def __init__(
+        self,
+        endpoint: str = "http://localhost:11434",
+        model_name: Optional[str] = None,
+    ) -> None:
+        super().__init__(model_name=model_name)
+        self._endpoint = endpoint.rstrip("/")
+
+    def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        url = f"{self._endpoint}/api/generate"
+        payload = {
+            "model": self._model_name,
+            "prompt": AI_PROMPT,
+            "images": [encoded],
+            "stream": False,
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict):
+                text = data.get("response", "") or data.get("message", "")
+            else:
+                text = str(data)
+            text = str(text).strip()
+            return text or "⚠ AI analysis returned no text."
+        except Exception as exc:
+            logger.error("Ollama API error: %s", exc)
+            return f"⚠ AI analysis failed: {exc}"
+
+
+class AIAnalyzer(AnalyzerBase):
+    """Provider-agnostic analyzer facade."""
+
+    _PROVIDER_MAP = {
+        "gemini": GeminiAnalyzer,
+        "openai": OpenAIAnalyzer,
+        "anthropic": AnthropicAnalyzer,
+        "ollama": OllamaAnalyzer,
+    }
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> None:
+        env_provider = os.environ.get("AI_PROVIDER")
+        resolved_provider = (provider or env_provider or "gemini").lower()
+        if resolved_provider not in self._PROVIDER_MAP:
+            raise ValueError(
+                f"Unsupported AI_PROVIDER '{resolved_provider}'. "
+                "Choose from gemini, openai, anthropic, ollama."
+            )
+        impl_cls = self._PROVIDER_MAP[resolved_provider]
+        effective_model = model_name or os.environ.get("AI_MODEL") or None
+        self._impl = self._build_impl(
+            impl_cls=impl_cls,
+            api_key=api_key,
+            model_name=effective_model,
+        )
+        self.provider_name = resolved_provider
+        self._model_name = getattr(self._impl, "_model_name", effective_model)
+
+    def _build_impl(
+        self,
+        impl_cls: Type[AnalyzerBase],
+        api_key: Optional[str],
+        model_name: Optional[str],
+    ) -> AnalyzerBase:
+        if impl_cls is OllamaAnalyzer:
+            return impl_cls(model_name=model_name)
+        return impl_cls(api_key=api_key, model_name=model_name)
+
+    def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+        return self._impl.analyse(image_bytes=image_bytes, mime_type=mime_type)
 
 
 # ===========================================================================
@@ -515,6 +735,12 @@ class MainController(QObject):
     api_key:
         Forwarded to :class:`AIAnalyzer`.  If *None*, the environment
         variable is used.
+    provider:
+        Optional override for the AI provider. Defaults to ``AI_PROVIDER``
+        environment variable (``"gemini"`` when unset).
+    model_name:
+        Optional override for the provider model. Defaults to ``AI_MODEL``
+        environment variable when set, otherwise provider-specific default.
     debounce_ms:
         Minimum number of milliseconds between successive AI calls while the
         hotkey is held and the cursor is moving.  Prevents flooding the API.
@@ -531,6 +757,8 @@ class MainController(QObject):
         app: QApplication,
         api_key: Optional[str] = None,
         debounce_ms: int = DEBOUNCE_MS,
+        provider: Optional[str] = None,
+        model_name: Optional[str] = None,
     ) -> None:
         super().__init__()
         self._app = app
@@ -538,7 +766,11 @@ class MainController(QObject):
         self._enabled: bool = True
 
         self._capture = ScreenCapture()
-        self._analyzer = AIAnalyzer(api_key=api_key)
+        self._analyzer = AIAnalyzer(
+            api_key=api_key,
+            provider=provider,
+            model_name=model_name,
+        )
         self._tooltip = FloatingTooltip()
 
         # Hotkey state
