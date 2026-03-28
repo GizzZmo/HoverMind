@@ -54,8 +54,16 @@ from google import genai
 from google.genai import types as genai_types
 from pynput import keyboard as pynput_keyboard
 from PyQt6.QtCore import QObject, QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QScreen
-from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPixmap, QScreen
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -93,6 +101,29 @@ AI_PROMPT: str = (
     "image. If it's code, explain it. If it's an image, describe it. If "
     "it's a UI element, state its function. Keep it under 3 sentences."
 )
+DEBOUNCE_MS: int = int(os.environ.get("DEBOUNCE_MS", "800"))
+HOVERMIND_LOG_FILE: str = os.environ.get("HOVERMIND_LOG_FILE", "")
+
+
+# ---------------------------------------------------------------------------
+# Optional file logging
+# ---------------------------------------------------------------------------
+
+def _setup_file_logging() -> None:
+    """Attach a :class:`logging.FileHandler` when ``HOVERMIND_LOG_FILE`` is set.
+
+    The handler writes to the path given by the environment variable at the
+    same log level and format as the console handler so both outputs are
+    consistent.
+    """
+    if not HOVERMIND_LOG_FILE:
+        return
+    handler = logging.FileHandler(HOVERMIND_LOG_FILE, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(handler)
+    logger.info("File logging enabled: %s", HOVERMIND_LOG_FILE)
 
 
 # ===========================================================================
@@ -276,6 +307,7 @@ class FloatingTooltip(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self._current_text: str = ""
         self._setup_window_flags()
         self._build_ui()
         self.hide()
@@ -309,8 +341,25 @@ class FloatingTooltip(QWidget):
         self._label.setFont(font)
         self._label.setStyleSheet("color: #F0F0F0; background: transparent;")
 
+        self._copy_btn = QPushButton("📋 Copy")
+        self._copy_btn.setFlat(True)
+        self._copy_btn.setStyleSheet(
+            "color: #A0A0A0; background: transparent; font-size: 9px;"
+            " border: none; text-align: left; padding: 0px;"
+        )
+        self._copy_btn.clicked.connect(self._copy_to_clipboard)
+
         layout.addWidget(self._label)
+        layout.addWidget(self._copy_btn)
         self.setLayout(layout)
+
+    # ------------------------------------------------------------------
+    # Clipboard helper
+    # ------------------------------------------------------------------
+
+    def _copy_to_clipboard(self) -> None:
+        """Copy the currently displayed AI response to the system clipboard."""
+        QApplication.clipboard().setText(self._current_text)
 
     # ------------------------------------------------------------------
     # Custom painting – rounded, semi-transparent background
@@ -343,6 +392,7 @@ class FloatingTooltip(QWidget):
         cursor_x, cursor_y:
             Current cursor position in physical screen pixels.
         """
+        self._current_text = text
         self._label.setText(text)
         # Let Qt calculate the natural size before moving.
         self.adjustSize()
@@ -369,6 +419,85 @@ class FloatingTooltip(QWidget):
 
 
 # ===========================================================================
+# SystemTrayIcon
+# ===========================================================================
+class SystemTrayIcon(QSystemTrayIcon):
+    """System-tray presence for HoverMind.
+
+    Provides a right-click context menu with:
+
+    * **Pause / Resume** – toggle whether the hotkey triggers analysis.
+    * **Quit HoverMind** – cleanly exit the application.
+
+    Parameters
+    ----------
+    controller:
+        The :class:`MainController` instance whose
+        :meth:`~MainController.set_enabled` method is called when the user
+        toggles the pause state.
+    parent:
+        Optional Qt parent object.
+    """
+
+    def __init__(
+        self,
+        controller: "MainController",
+        parent: Optional[QObject] = None,
+    ) -> None:
+        super().__init__(self._create_icon(), parent)
+        self._controller = controller
+        self._paused: bool = False
+        self._setup_menu()
+        self.setToolTip("HoverMind – Hold Alt+Shift to analyse")
+        self.show()
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _create_icon() -> QIcon:
+        """Build a minimal 16×16 icon programmatically (no image file needed)."""
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(QColor(0, 0, 0, 0))  # transparent base
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(100, 149, 237))  # cornflower blue
+        painter.setPen(QColor(70, 110, 200))
+        painter.drawEllipse(1, 1, 14, 14)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _setup_menu(self) -> None:
+        menu = QMenu()
+
+        self._toggle_action = QAction("Pause HoverMind")
+        self._toggle_action.setCheckable(True)
+        self._toggle_action.triggered.connect(self._on_toggle)
+        menu.addAction(self._toggle_action)
+
+        menu.addSeparator()
+
+        quit_action = QAction("Quit HoverMind")
+        quit_action.triggered.connect(QApplication.quit)
+        menu.addAction(quit_action)
+
+        self.setContextMenu(menu)
+
+    def _on_toggle(self, checked: bool) -> None:
+        self._paused = checked
+        self._controller.set_enabled(not checked)
+        self._toggle_action.setText(
+            "Resume HoverMind" if checked else "Pause HoverMind"
+        )
+        self.setToolTip(
+            "HoverMind – Paused"
+            if checked
+            else "HoverMind – Hold Alt+Shift to analyse"
+        )
+
+
+# ===========================================================================
 # MainController
 # ===========================================================================
 class MainController(QObject):
@@ -389,6 +518,7 @@ class MainController(QObject):
     debounce_ms:
         Minimum number of milliseconds between successive AI calls while the
         hotkey is held and the cursor is moving.  Prevents flooding the API.
+        Defaults to the ``DEBOUNCE_MS`` environment variable (800 ms if unset).
     """
 
     # Signal emitted from the background thread to update the tooltip text
@@ -400,11 +530,12 @@ class MainController(QObject):
         self,
         app: QApplication,
         api_key: Optional[str] = None,
-        debounce_ms: int = 800,
+        debounce_ms: int = DEBOUNCE_MS,
     ) -> None:
         super().__init__()
         self._app = app
         self._debounce_ms = debounce_ms
+        self._enabled: bool = True
 
         self._capture = ScreenCapture()
         self._analyzer = AIAnalyzer(api_key=api_key)
@@ -437,6 +568,9 @@ class MainController(QObject):
             on_release=self._on_key_release,
         )
 
+        # System tray icon
+        self._tray = SystemTrayIcon(controller=self, parent=self)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -454,6 +588,20 @@ class MainController(QObject):
         self._listener.stop()
         self._tooltip.hide_tooltip()
         logger.info("HoverMind stopped.")
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Pause or resume hotkey-triggered analysis.
+
+        Parameters
+        ----------
+        enabled:
+            ``True`` to resume normal operation; ``False`` to pause so that
+            holding Alt+Shift no longer triggers any analysis.
+        """
+        self._enabled = enabled
+        if not enabled:
+            self._hide_tooltip.emit()
+        logger.info("HoverMind %s.", "enabled" if enabled else "paused")
 
     # ------------------------------------------------------------------
     # Key event handlers (pynput background thread)
@@ -482,7 +630,7 @@ class MainController(QObject):
 
     def _poll_cursor(self) -> None:
         """Check the cursor position and (re-)arm the debounce timer."""
-        if not self._hotkey_active:
+        if not self._hotkey_active or not self._enabled:
             return
 
         # Retrieve cursor in global screen coordinates via Qt
@@ -501,7 +649,7 @@ class MainController(QObject):
 
     def _trigger_analysis_debounced(self) -> None:
         """Called on the GUI thread after the debounce period expires."""
-        if not self._hotkey_active:
+        if not self._hotkey_active or not self._enabled:
             return
 
         x, y = self._last_cursor
@@ -513,6 +661,9 @@ class MainController(QObject):
             if self._analysis_running:
                 return
             self._analysis_running = True
+
+        # Show the loading indicator immediately so the user sees feedback.
+        self._update_tooltip.emit("🔍 Analysing…", x, y)
 
         threading.Thread(
             target=self._run_analysis,
@@ -544,6 +695,8 @@ class MainController(QObject):
 # ===========================================================================
 def main() -> None:
     """Create the Qt application and run the event loop."""
+    _setup_file_logging()
+
     if sys.platform == "win32":
         # Python 3.8+ embeds a manifest that declares
         # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, so Windows rejects Qt's

@@ -201,6 +201,16 @@ def _make_pyqt6_stub():
         def setQuitOnLastWindowClosed(self, v):
             pass
 
+        @staticmethod
+        def clipboard():
+            cb = MagicMock()
+            cb.setText = MagicMock()
+            return cb
+
+        @staticmethod
+        def quit():
+            pass
+
         def exec(self):
             return 0
 
@@ -273,6 +283,57 @@ def _make_pyqt6_stub():
     widgets.QLabel = _QLabel
     widgets.QVBoxLayout = _QVBoxLayout
 
+    class _QPushButton:
+        def __init__(self, *args):
+            self.clicked = MagicMock()
+
+        def setFlat(self, v):
+            pass
+
+        def setStyleSheet(self, s):
+            pass
+
+    class _QSystemTrayIcon:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def setToolTip(self, text):
+            pass
+
+        def setContextMenu(self, menu):
+            pass
+
+        def show(self):
+            pass
+
+        def setIcon(self, icon):
+            pass
+
+    class _QMenu:
+        def __init__(self, *args):
+            pass
+
+        def addAction(self, action_or_text):
+            if isinstance(action_or_text, str):
+                return _make_action(action_or_text)
+            return action_or_text
+
+        def addSeparator(self):
+            pass
+
+        def exec(self, *args):
+            pass
+
+    def _make_action(text=""):
+        action = MagicMock()
+        action.triggered = MagicMock()
+        action.triggered.connect = MagicMock()
+        return action
+
+    widgets.QPushButton = _QPushButton
+    widgets.QSystemTrayIcon = _QSystemTrayIcon
+    widgets.QMenu = _QMenu
+
     # --- QtGui stubs ---
     class _QColor:
         def __init__(self, *args):
@@ -290,6 +351,18 @@ def _make_pyqt6_stub():
             pass
 
         def setRenderHint(self, h):
+            pass
+
+        def setBrush(self, b):
+            pass
+
+        def setPen(self, p):
+            pass
+
+        def drawEllipse(self, *args):
+            pass
+
+        def end(self):
             pass
 
         def fillPath(self, path, color):
@@ -310,12 +383,43 @@ def _make_pyqt6_stub():
             p.y.return_value = 540
             return p
 
+    class _QAction:
+        def __init__(self, *args, **kwargs):
+            self.triggered = MagicMock()
+            self.triggered.connect = MagicMock()
+            self._text = args[0] if args else ""
+            self._checkable = False
+            self._checked = False
+
+        def setCheckable(self, v):
+            self._checkable = v
+
+        def setText(self, text):
+            self._text = text
+
+        def setChecked(self, v):
+            self._checked = v
+
+    class _QIcon:
+        def __init__(self, *args):
+            pass
+
+    class _QPixmap:
+        def __init__(self, *args):
+            pass
+
+        def fill(self, color):
+            pass
+
     gui.QColor = _QColor
     gui.QFont = _QFont
     gui.QPainter = _QPainter
     gui.QPainterPath = _QPainterPath
     gui.QScreen = _QScreen
     gui.QCursor = _QCursor
+    gui.QAction = _QAction
+    gui.QIcon = _QIcon
+    gui.QPixmap = _QPixmap
 
     pyqt6.QtCore = core
     pyqt6.QtWidgets = widgets
@@ -534,6 +638,185 @@ class TestMainController(unittest.TestCase):
         ctrl = self._make_controller()
         ctrl.start()
         ctrl.stop()
+
+
+class TestDebounceConfig(unittest.TestCase):
+    """Tests for configurable debounce delay (roadmap 2.5)."""
+
+    def test_default_debounce_is_module_constant(self):
+        """MainController default debounce must equal the DEBOUNCE_MS constant."""
+        import inspect
+        sig = inspect.signature(hovermind.MainController.__init__)
+        default = sig.parameters["debounce_ms"].default
+        self.assertEqual(default, hovermind.DEBOUNCE_MS)
+
+    def test_debounce_ms_constant_type(self):
+        """DEBOUNCE_MS must be an integer."""
+        self.assertIsInstance(hovermind.DEBOUNCE_MS, int)
+
+    def test_custom_debounce_stored(self):
+        """A custom debounce_ms value must be stored on the controller."""
+        app = qt_widgets.QApplication([])
+        ctrl = hovermind.MainController(app, api_key="fake-key", debounce_ms=1200)
+        self.assertEqual(ctrl._debounce_ms, 1200)
+
+
+class TestFileLogging(unittest.TestCase):
+    """Tests for optional file logging (roadmap 2.6)."""
+
+    def test_no_file_handler_when_env_unset(self):
+        """No FileHandler should be added when HOVERMIND_LOG_FILE is empty."""
+        import logging as _logging
+        root = _logging.getLogger()
+        file_handlers_before = [
+            h for h in root.handlers if isinstance(h, _logging.FileHandler)
+        ]
+        count_before = len(file_handlers_before)
+        with patch.object(hovermind, "HOVERMIND_LOG_FILE", ""):
+            hovermind._setup_file_logging()
+        file_handlers_after = [
+            h for h in root.handlers if isinstance(h, _logging.FileHandler)
+        ]
+        self.assertEqual(len(file_handlers_after), count_before)
+
+    def test_file_handler_added(self):
+        """_setup_file_logging() must add a FileHandler when path is non-empty."""
+        import logging as _logging
+        import tempfile, os as _os
+        root = _logging.getLogger()
+        with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as tf:
+            log_path = tf.name
+        try:
+            with patch.object(hovermind, "HOVERMIND_LOG_FILE", log_path):
+                hovermind._setup_file_logging()
+            file_handlers = [
+                h for h in root.handlers if isinstance(h, _logging.FileHandler)
+            ]
+            paths = [h.baseFilename for h in file_handlers]
+            self.assertIn(_os.path.abspath(log_path), [_os.path.abspath(p) for p in paths])
+        finally:
+            # Remove the added handler to avoid polluting other tests
+            for h in list(root.handlers):
+                if isinstance(h, _logging.FileHandler) and h.baseFilename == _os.path.abspath(log_path):
+                    root.removeHandler(h)
+                    h.close()
+            _os.unlink(log_path)
+
+
+class TestLoadingIndicator(unittest.TestCase):
+    """Tests for the "Loading…" indicator (roadmap 2.4)."""
+
+    def test_loading_text_shown_before_analysis(self):
+        """Triggering debounced analysis must show the loading text in the tooltip."""
+        app = qt_widgets.QApplication([])
+        ctrl = hovermind.MainController(app, api_key="fake-key")
+        ctrl._hotkey_active = True
+        ctrl._enabled = True
+        ctrl._last_cursor = (100, 200)
+
+        emitted = []
+        ctrl._update_tooltip.emit = lambda text, x, y: emitted.append(text)
+
+        # Prevent the background thread from actually running
+        with patch("threading.Thread") as mock_thread:
+            mock_thread.return_value.start = MagicMock()
+            ctrl._trigger_analysis_debounced()
+
+        self.assertTrue(any("nalys" in t for t in emitted),
+                        f"Expected loading text in emitted signals, got: {emitted}")
+
+
+class TestSetEnabled(unittest.TestCase):
+    """Tests for MainController.set_enabled (roadmap 2.1)."""
+
+    def _make_controller(self):
+        app = qt_widgets.QApplication([])
+        return hovermind.MainController(app, api_key="fake-key")
+
+    def test_initially_enabled(self):
+        """Controller must start in the enabled state."""
+        ctrl = self._make_controller()
+        self.assertTrue(ctrl._enabled)
+
+    def test_set_enabled_false(self):
+        """set_enabled(False) must clear the enabled flag."""
+        ctrl = self._make_controller()
+        ctrl.set_enabled(False)
+        self.assertFalse(ctrl._enabled)
+
+    def test_set_enabled_true(self):
+        """set_enabled(True) must restore the enabled flag."""
+        ctrl = self._make_controller()
+        ctrl.set_enabled(False)
+        ctrl.set_enabled(True)
+        self.assertTrue(ctrl._enabled)
+
+    def test_poll_cursor_respects_enabled(self):
+        """_poll_cursor must do nothing when _enabled is False."""
+        ctrl = self._make_controller()
+        ctrl._hotkey_active = True
+        ctrl._enabled = False
+        initial_cursor = ctrl._last_cursor
+        ctrl._poll_cursor()
+        # Debounce timer should not have been started (cursor unchanged)
+        self.assertEqual(ctrl._last_cursor, initial_cursor)
+
+
+class TestSystemTrayIcon(unittest.TestCase):
+    """Tests for the SystemTrayIcon class (roadmap 2.1)."""
+
+    def _make_controller(self):
+        app = qt_widgets.QApplication([])
+        return hovermind.MainController(app, api_key="fake-key")
+
+    def test_controller_has_tray(self):
+        """MainController must expose a _tray attribute after construction."""
+        ctrl = self._make_controller()
+        self.assertTrue(hasattr(ctrl, "_tray"))
+        self.assertIsNotNone(ctrl._tray)
+
+    def test_tray_is_system_tray_icon(self):
+        """_tray must be an instance of SystemTrayIcon."""
+        ctrl = self._make_controller()
+        self.assertIsInstance(ctrl._tray, hovermind.SystemTrayIcon)
+
+    def test_tray_on_toggle_pause(self):
+        """_on_toggle(True) must disable the controller."""
+        ctrl = self._make_controller()
+        ctrl._tray._on_toggle(True)
+        self.assertFalse(ctrl._enabled)
+
+    def test_tray_on_toggle_resume(self):
+        """_on_toggle(False) must re-enable the controller."""
+        ctrl = self._make_controller()
+        ctrl._tray._on_toggle(True)   # pause
+        ctrl._tray._on_toggle(False)  # resume
+        self.assertTrue(ctrl._enabled)
+
+
+class TestFloatingTooltipCopy(unittest.TestCase):
+    """Tests for the clipboard copy button (roadmap 2.3)."""
+
+    def setUp(self):
+        self._tooltip = hovermind.FloatingTooltip()
+
+    def test_copy_button_exists(self):
+        """FloatingTooltip must have a _copy_btn attribute."""
+        self.assertTrue(hasattr(self._tooltip, "_copy_btn"))
+
+    def test_current_text_updated_on_show(self):
+        """show_text must update _current_text."""
+        self._tooltip.show_text("Hello World", 100, 100)
+        self.assertEqual(self._tooltip._current_text, "Hello World")
+
+    def test_copy_to_clipboard_does_not_raise(self):
+        """_copy_to_clipboard must not raise even when text is empty."""
+        self._tooltip._copy_to_clipboard()  # should be silent
+
+    def test_copy_to_clipboard_after_show(self):
+        """_copy_to_clipboard must not raise after show_text has been called."""
+        self._tooltip.show_text("AI response text", 500, 300)
+        self._tooltip._copy_to_clipboard()  # should be silent
 
 
 if __name__ == "__main__":

@@ -24,18 +24,18 @@ The initial working release establishes the foundational pipeline.
 
 ---
 
-## Milestone 2 — Developer Experience & Polish (v0.2) 📋
+## Milestone 2 — Developer Experience & Polish (v0.2) 🚧
 
 Improves usability for end users and lowers the barrier for contributors.
 
 | # | Feature | Status |
 |---|---------|--------|
-| 2.1 | **System tray icon** — run silently in the background; right-click menu for enable/disable and quit | 📋 |
-| 2.2 | **Standalone Windows installer** — PyInstaller-packaged `.exe` with bundled dependencies; no Python required | 📋 |
-| 2.3 | **Clipboard copy button** — small "copy" icon in the tooltip to copy the AI response to the clipboard | 📋 |
-| 2.4 | **"Loading…" indicator** — show a spinner or progress text in the tooltip while the API request is in flight | 📋 |
-| 2.5 | **Configurable debounce delay** — expose the 800 ms wait as a user setting | 📋 |
-| 2.6 | **Logging to file** — optional `hovermind.log` for troubleshooting | 📋 |
+| 2.1 | **System tray icon** — run silently in the background; right-click menu for enable/disable and quit | ✅ |
+| 2.2 | **Standalone Windows installer** — PyInstaller-packaged `.exe` with bundled dependencies; no Python required | ✅ |
+| 2.3 | **Clipboard copy button** — small "copy" icon in the tooltip to copy the AI response to the clipboard | ✅ |
+| 2.4 | **"Loading…" indicator** — show a spinner or progress text in the tooltip while the API request is in flight | ✅ |
+| 2.5 | **Configurable debounce delay** — expose the 800 ms wait as a user setting | ✅ |
+| 2.6 | **Logging to file** — optional `hovermind.log` for troubleshooting | ✅ |
 | 2.7 | **Comprehensive README & docs** — architecture guide, roadmap, contributing guide | ✅ |
 
 ---
