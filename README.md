@@ -18,4 +18,4 @@ HoverMind turns your standard Windows mouse pointer into a context-aware AI assi
 ### Installation
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/GizzZmo/HoverMind.git](https://github.com/yourusername/HoverMind.git)
+   git clone [https://github.com/GizzZmo/HoverMind.git](https://github.com/GizzZmo/HoverMind.git)
