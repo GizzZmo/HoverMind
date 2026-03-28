@@ -106,8 +106,6 @@ AI_PROMPT: str = (
 )
 DEBOUNCE_MS: int = int(os.environ.get("DEBOUNCE_MS", "800"))
 HOVERMIND_LOG_FILE: str = os.environ.get("HOVERMIND_LOG_FILE", "")
-AI_PROVIDER: str = os.environ.get("AI_PROVIDER", "gemini").lower()
-AI_MODEL: str = os.environ.get("AI_MODEL", "")
 
 
 # ---------------------------------------------------------------------------
