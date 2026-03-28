@@ -46,12 +46,12 @@ Let users choose their preferred AI backend without changing any code.
 
 | # | Feature | Status |
 |---|---------|--------|
-| 3.1 | **OpenAI GPT-4o Vision** — plug-in via `OPENAI_API_KEY` environment variable | 📋 |
-| 3.2 | **Anthropic Claude Vision** — plug-in via `ANTHROPIC_API_KEY` | 📋 |
-| 3.3 | **Ollama / local LLM support** — send images to a locally running multimodal model (e.g. LLaVA, BakLLaVA) for fully offline use | 📋 |
-| 3.4 | **Provider selection in config** — `AI_PROVIDER=gemini|openai|anthropic|ollama` environment variable | 📋 |
-| 3.5 | **Model selection** — `AI_MODEL` environment variable overrides the default model for any provider | 📋 |
-| 3.6 | **Pluggable `AnalyzerBase` ABC** — clean abstract interface so third-party providers can be added without touching core code | 📋 |
+| 3.1 | **OpenAI GPT-4o Vision** — plug-in via `OPENAI_API_KEY` environment variable | ✅ |
+| 3.2 | **Anthropic Claude Vision** — plug-in via `ANTHROPIC_API_KEY` | ✅ |
+| 3.3 | **Ollama / local LLM support** — send images to a locally running multimodal model (e.g. LLaVA, BakLLaVA) for fully offline use | ✅ |
+| 3.4 | **Provider selection in config** — `AI_PROVIDER=gemini|openai|anthropic|ollama` environment variable | ✅ |
+| 3.5 | **Model selection** — `AI_MODEL` environment variable overrides the default model for any provider | ✅ |
+| 3.6 | **Pluggable `AnalyzerBase` ABC** — clean abstract interface so third-party providers can be added without touching core code | ✅ |
 
 ---
 
