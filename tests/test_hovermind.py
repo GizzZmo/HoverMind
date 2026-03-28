@@ -1,0 +1,504 @@
+"""
+Unit tests for HoverMind components.
+
+These tests are designed to run in a headless CI environment (no display,
+no Windows API, no real Gemini API key).  All external dependencies are
+mocked.
+"""
+
+from __future__ import annotations
+
+import io
+import sys
+import types
+import unittest
+from unittest.mock import MagicMock, patch, PropertyMock
+
+
+# ---------------------------------------------------------------------------
+# Stub out platform-specific / heavy dependencies before importing hovermind
+# so the tests can run on Linux / macOS CI runners too.
+# ---------------------------------------------------------------------------
+
+def _make_pynput_stub():
+    """Return a minimal stub for the pynput.keyboard module."""
+    mod = types.ModuleType("pynput")
+    kb = types.ModuleType("pynput.keyboard")
+
+    class _Key:
+        alt = "alt"
+        shift = "shift"
+
+    class _Listener:
+        def __init__(self, on_press=None, on_release=None):
+            self.on_press = on_press
+            self.on_release = on_release
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    kb.Key = _Key
+    kb.Listener = _Listener
+    mod.keyboard = kb
+    return mod, kb
+
+
+def _make_mss_stub():
+    """Return a minimal stub for the mss module."""
+    mod = types.ModuleType("mss")
+    mod.tools = types.ModuleType("mss.tools")
+
+    class _FakeScreenshot:
+        size = (500, 500)
+        # BGRA data: 500×500 × 4 bytes of zeros
+        bgra = b"\x00" * (500 * 500 * 4)
+
+    class _FakeMss:
+        monitors = [
+            {"left": 0, "top": 0, "width": 1920, "height": 1080},
+            {"left": 0, "top": 0, "width": 1920, "height": 1080},
+        ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def grab(self, region):
+            ss = _FakeScreenshot()
+            ss.size = (region["width"], region["height"])
+            ss.bgra = b"\x00" * (region["width"] * region["height"] * 4)
+            return ss
+
+    def _mss_factory():
+        return _FakeMss()
+
+    mod.mss = _mss_factory
+    return mod
+
+
+def _make_genai_stub():
+    """Return a minimal stub for the google.genai module."""
+    google_mod = types.ModuleType("google")
+    genai_mod = types.ModuleType("google.genai")
+    types_mod = types.ModuleType("google.genai.types")
+
+    class _Part:
+        @staticmethod
+        def from_bytes(data, mime_type):
+            obj = _Part()
+            obj.data = data
+            obj.mime_type = mime_type
+            return obj
+
+    class _Response:
+        text = "This is a test button in a dialog box."
+
+    class _Models:
+        def generate_content(self, model, contents):
+            return _Response()
+
+    class _Client:
+        def __init__(self, api_key):
+            self.api_key = api_key
+            self.models = _Models()
+
+    types_mod.Part = _Part
+    genai_mod.Client = _Client
+    genai_mod.types = types_mod
+    google_mod.genai = genai_mod
+
+    return google_mod, genai_mod, types_mod
+
+
+def _make_pyqt6_stub():
+    """Return a minimal stub for PyQt6 so tests run without a display."""
+    pyqt6 = types.ModuleType("PyQt6")
+    core = types.ModuleType("PyQt6.QtCore")
+    widgets = types.ModuleType("PyQt6.QtWidgets")
+    gui = types.ModuleType("PyQt6.QtGui")
+
+    # --- QtCore stubs ---
+    class _Qt:
+        class WindowType:
+            FramelessWindowHint = 0
+            WindowStaysOnTopHint = 0
+            Tool = 0
+            WindowDoesNotAcceptFocus = 0
+
+        class WidgetAttribute:
+            WA_TranslucentBackground = 0
+            WA_ShowWithoutActivating = 0
+
+        class RenderHint:
+            Antialiasing = 0
+
+    class _QObject:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class _QTimer:
+        def __init__(self, *args):
+            self._cb = None
+            self._single = False
+            self.timeout = MagicMock()
+
+        def setSingleShot(self, v):
+            self._single = v
+
+        def setInterval(self, ms):
+            pass
+
+        def start(self, ms=None):
+            pass
+
+        def stop(self):
+            pass
+
+        @property
+        def is_active(self):
+            return False
+
+    class _QPoint:
+        def __init__(self, x=0, y=0):
+            self.x = x
+            self.y = y
+
+    def _pyqtSignal(*args):
+        return MagicMock()
+
+    core.Qt = _Qt
+    core.QObject = _QObject
+    core.QTimer = _QTimer
+    core.QPoint = _QPoint
+    core.pyqtSignal = _pyqtSignal
+
+    # --- QtWidgets stubs ---
+    class _QApplication:
+        _instance = None
+
+        def __init__(self, argv):
+            _QApplication._instance = self
+
+        @staticmethod
+        def primaryScreen():
+            screen = MagicMock()
+            screen.availableGeometry.return_value = MagicMock(
+                right=lambda: 1920,
+                bottom=lambda: 1080,
+            )
+            return screen
+
+        def setQuitOnLastWindowClosed(self, v):
+            pass
+
+        def exec(self):
+            return 0
+
+    class _QWidget:
+        def __init__(self, *args, **kwargs):
+            self._visible = False
+            self._pos = (0, 0)
+
+        def setWindowFlags(self, flags):
+            pass
+
+        def setAttribute(self, attr, val=True):
+            pass
+
+        def setLayout(self, layout):
+            pass
+
+        def adjustSize(self):
+            pass
+
+        def width(self):
+            return 300
+
+        def height(self):
+            return 100
+
+        def move(self, point):
+            self._pos = (point.x, point.y)
+
+        def show(self):
+            self._visible = True
+
+        def raise_(self):
+            pass
+
+        def hide(self):
+            self._visible = False
+
+    class _QLabel:
+        def __init__(self, *args):
+            self._text = ""
+
+        def setWordWrap(self, v):
+            pass
+
+        def setMaximumWidth(self, w):
+            pass
+
+        def setFont(self, f):
+            pass
+
+        def setStyleSheet(self, s):
+            pass
+
+        def setText(self, t):
+            self._text = t
+
+    class _QVBoxLayout:
+        def __init__(self, *args):
+            pass
+
+        def setContentsMargins(self, *args):
+            pass
+
+        def addWidget(self, w):
+            pass
+
+    widgets.QApplication = _QApplication
+    widgets.QWidget = _QWidget
+    widgets.QLabel = _QLabel
+    widgets.QVBoxLayout = _QVBoxLayout
+
+    # --- QtGui stubs ---
+    class _QColor:
+        def __init__(self, *args):
+            pass
+
+    class _QFont:
+        def __init__(self, *args):
+            pass
+
+    class _QPainter:
+        class RenderHint:
+            Antialiasing = 0
+
+        def __init__(self, *args):
+            pass
+
+        def setRenderHint(self, h):
+            pass
+
+        def fillPath(self, path, color):
+            pass
+
+    class _QPainterPath:
+        def addRoundedRect(self, *args):
+            pass
+
+    class _QScreen:
+        pass
+
+    class _QCursor:
+        @staticmethod
+        def pos():
+            p = MagicMock()
+            p.x.return_value = 960
+            p.y.return_value = 540
+            return p
+
+    gui.QColor = _QColor
+    gui.QFont = _QFont
+    gui.QPainter = _QPainter
+    gui.QPainterPath = _QPainterPath
+    gui.QScreen = _QScreen
+    gui.QCursor = _QCursor
+
+    pyqt6.QtCore = core
+    pyqt6.QtWidgets = widgets
+    pyqt6.QtGui = gui
+    return pyqt6, core, widgets, gui
+
+
+# ---------------------------------------------------------------------------
+# Register all stubs in sys.modules before importing hovermind
+# ---------------------------------------------------------------------------
+pynput_mod, pynput_kb = _make_pynput_stub()
+sys.modules.setdefault("pynput", pynput_mod)
+sys.modules.setdefault("pynput.keyboard", pynput_kb)
+
+mss_mod = _make_mss_stub()
+sys.modules.setdefault("mss", mss_mod)
+sys.modules.setdefault("mss.tools", mss_mod.tools)
+
+google_mod, genai_mod, genai_types_mod = _make_genai_stub()
+sys.modules.setdefault("google", google_mod)
+sys.modules.setdefault("google.genai", genai_mod)
+sys.modules.setdefault("google.genai.types", genai_types_mod)
+
+pyqt6_mod, qt_core, qt_widgets, qt_gui = _make_pyqt6_stub()
+sys.modules.setdefault("PyQt6", pyqt6_mod)
+sys.modules.setdefault("PyQt6.QtCore", qt_core)
+sys.modules.setdefault("PyQt6.QtWidgets", qt_widgets)
+sys.modules.setdefault("PyQt6.QtGui", qt_gui)
+
+# dotenv is lightweight but stub it for isolation
+dotenv_mod = types.ModuleType("dotenv")
+dotenv_mod.load_dotenv = lambda *a, **kw: None
+sys.modules.setdefault("dotenv", dotenv_mod)
+
+# Now it is safe to import the application module
+import hovermind  # noqa: E402  (must come after stubs are registered)
+
+
+# ===========================================================================
+# Tests
+# ===========================================================================
+
+class TestScreenCapture(unittest.TestCase):
+    """Tests for the ScreenCapture class."""
+
+    def test_capture_returns_pil_image(self):
+        """capture_around should return a PIL Image."""
+        from PIL import Image
+        sc = hovermind.ScreenCapture()
+        img = sc.capture_around(960, 540)
+        self.assertIsInstance(img, Image.Image)
+
+    def test_capture_clamps_to_screen_bounds(self):
+        """Near-edge coordinates must not cause a negative region size."""
+        sc = hovermind.ScreenCapture()
+        # Top-left corner — region would normally extend beyond the screen.
+        img = sc.capture_around(0, 0)
+        w, h = img.size
+        self.assertGreater(w, 0)
+        self.assertGreater(h, 0)
+
+    def test_capture_as_bytes_returns_bytes(self):
+        """capture_as_bytes must return non-empty bytes."""
+        sc = hovermind.ScreenCapture()
+        data = sc.capture_as_bytes(960, 540)
+        self.assertIsInstance(data, bytes)
+        self.assertGreater(len(data), 0)
+
+    def test_capture_as_bytes_is_valid_png(self):
+        """capture_as_bytes with default format must produce a valid PNG."""
+        from PIL import Image
+        sc = hovermind.ScreenCapture()
+        data = sc.capture_as_bytes(100, 100)
+        img = Image.open(io.BytesIO(data))
+        self.assertEqual(img.format, "PNG")
+
+    def test_custom_snippet_size(self):
+        """ScreenCapture should honour a custom snippet_size."""
+        sc = hovermind.ScreenCapture(snippet_size=200)
+        img = sc.capture_around(960, 540)
+        # The captured image may be smaller if near an edge, but width/height
+        # must not exceed the requested snippet size.
+        self.assertLessEqual(img.width, 200)
+        self.assertLessEqual(img.height, 200)
+
+
+class TestAIAnalyzer(unittest.TestCase):
+    """Tests for the AIAnalyzer class."""
+
+    def test_raises_without_api_key(self):
+        """AIAnalyzer must raise ValueError when no API key is available."""
+        with patch.dict("os.environ", {}, clear=True):
+            # Ensure the env var is not present
+            import os
+            os.environ.pop("GEMINI_API_KEY", None)
+            with self.assertRaises(ValueError):
+                hovermind.AIAnalyzer(api_key=None)
+
+    def test_analyse_returns_string(self):
+        """analyse() must return a non-empty string."""
+        analyzer = hovermind.AIAnalyzer(api_key="fake-key-for-testing")
+        result = analyzer.analyse(b"fake-image-data")
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+
+    def test_analyse_returns_error_string_on_exception(self):
+        """analyse() must return an error string (not raise) on API failure."""
+        analyzer = hovermind.AIAnalyzer(api_key="fake-key-for-testing")
+        # Make the internal client raise an exception
+        analyzer._client.models.generate_content = MagicMock(
+            side_effect=RuntimeError("network error")
+        )
+        result = analyzer.analyse(b"fake-image-data")
+        self.assertIn("⚠", result)
+        self.assertIn("network error", result)
+
+    def test_custom_model_name(self):
+        """AIAnalyzer should accept a custom model name."""
+        analyzer = hovermind.AIAnalyzer(
+            api_key="fake-key", model_name="gemini-1.5-pro"
+        )
+        self.assertEqual(analyzer._model_name, "gemini-1.5-pro")
+
+
+class TestFloatingTooltip(unittest.TestCase):
+    """Tests for the FloatingTooltip widget."""
+
+    def setUp(self):
+        self._tooltip = hovermind.FloatingTooltip()
+
+    def test_initially_hidden(self):
+        """The tooltip must be hidden when first created."""
+        self.assertFalse(self._tooltip._visible)
+
+    def test_show_text_makes_visible(self):
+        """show_text must make the tooltip visible."""
+        self._tooltip.show_text("Hello World", 500, 300)
+        self.assertTrue(self._tooltip._visible)
+
+    def test_hide_tooltip(self):
+        """hide_tooltip must hide the tooltip."""
+        self._tooltip.show_text("Visible", 100, 100)
+        self._tooltip.hide_tooltip()
+        self.assertFalse(self._tooltip._visible)
+
+    def test_label_text_is_set(self):
+        """show_text must update the internal label text."""
+        msg = "This is a PyQt6 button."
+        self._tooltip.show_text(msg, 800, 400)
+        self.assertEqual(self._tooltip._label._text, msg)
+
+
+class TestMainController(unittest.TestCase):
+    """Tests for the MainController class."""
+
+    def _make_controller(self):
+        app = qt_widgets.QApplication([])
+        return hovermind.MainController(app, api_key="fake-key")
+
+    def test_instantiation(self):
+        """MainController must instantiate without errors."""
+        ctrl = self._make_controller()
+        self.assertIsNotNone(ctrl)
+
+    def test_hotkey_activation(self):
+        """Pressing both hotkey keys must activate the hotkey flag."""
+        ctrl = self._make_controller()
+        # Simulate pressing Alt then Shift
+        ctrl._on_key_press(pynput_kb.Key.alt)
+        self.assertFalse(ctrl._hotkey_active)  # only one key so far
+        ctrl._on_key_press(pynput_kb.Key.shift)
+        self.assertTrue(ctrl._hotkey_active)
+
+    def test_hotkey_deactivation_on_release(self):
+        """Releasing a hotkey key must deactivate the flag."""
+        ctrl = self._make_controller()
+        ctrl._on_key_press(pynput_kb.Key.alt)
+        ctrl._on_key_press(pynput_kb.Key.shift)
+        self.assertTrue(ctrl._hotkey_active)
+        ctrl._on_key_release(pynput_kb.Key.shift)
+        self.assertFalse(ctrl._hotkey_active)
+
+    def test_stop_does_not_raise(self):
+        """stop() must not raise any exceptions."""
+        ctrl = self._make_controller()
+        ctrl.start()
+        ctrl.stop()
+
+
+if __name__ == "__main__":
+    unittest.main()
