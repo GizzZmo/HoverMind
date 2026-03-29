@@ -1,55 +1,92 @@
+import argparse
+import io
 import os
+import sys
+from typing import Optional, Union
 
 from google import genai
 from PIL import Image
 
-
-# 1. Initialize the client (picks up GEMINI_API_KEY from the environment)
-client = genai.Client()
+from hovermind import AI_PROMPT, GeminiAnalyzer
 
 
-def analyze_image(image_path: str) -> None:
-    """Send an image to the Gemini Vision API and print a short analysis."""
-    print(f"Loading image from: {image_path}...")
+ImageSource = Union[str, os.PathLike, Image.Image, bytes, bytearray]
+
+
+def _load_image(source: ImageSource) -> Image.Image:
+    """Return a PIL Image from a path, bytes, or already-open image."""
+    if isinstance(source, Image.Image):
+        return source
+    if isinstance(source, (str, os.PathLike)):
+        with Image.open(source) as img:
+            return img.copy()
+    if isinstance(source, (bytes, bytearray)):
+        with Image.open(io.BytesIO(source)) as img:
+            return img.copy()
+    raise TypeError(
+        "image must be a PIL.Image.Image, path-like, or bytes-like object"
+    )
+
+
+def analyze_image(
+    image: ImageSource,
+    *,
+    model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> str:
+    """Send an image to the Gemini Vision API and return the analysis text."""
+    resolved_key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not resolved_key:
+        raise ValueError("GEMINI_API_KEY is not set.")
+
+    model = model_name or os.environ.get("AI_MODEL") or GeminiAnalyzer.default_model
+    client = genai.Client(api_key=resolved_key)
+    img = _load_image(image)
+
+    response = client.models.generate_content(
+        model=model,
+        contents=[img, AI_PROMPT],
+    )
+    return (response.text or "").strip()
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Send an image to Gemini Vision and print the analysis."
+    )
+    parser.add_argument(
+        "image",
+        help="Path to the image file to analyze.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Optional model override (defaults to AI_MODEL env or Gemini default).",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = _parse_args()
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("Error: GEMINI_API_KEY environment variable is not set.", file=sys.stderr)
+        return 1
 
     try:
-        # 2. Open the image using Pillow
-        # In the app, the screen grabber can pass a PIL Image directly.
-        img = Image.open(image_path)
-
-        # 3. The HoverMind system prompt
-        prompt = (
-            "Briefly explain what is the main subject of this image. "
-            "If it's code, explain it. If it's an image, describe it. "
-            "If it's a UI element, state its function. Keep it under 3 sentences."
-        )
-
+        print(f"Loading image from: {args.image}...")
         print("Sending to Gemini Vision API... 🧠\n")
-
-        # 4. Call the model (using the stable 2.5-flash)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[img, prompt],
-        )
-
-        # 5. Output the result
+        result = analyze_image(args.image, model_name=args.model)
         print("HoverMind AI Analysis:")
         print("-" * 30)
-        print(response.text)
+        print(result)
         print("-" * 30)
-
+        return 0
     except FileNotFoundError:
-        print(f"Error: Could not find the image file '{image_path}'.")
+        print(f"Error: Could not find the image file '{args.image}'.", file=sys.stderr)
     except Exception as exc:  # pragma: no cover - demo helper
-        print(f"An error occurred: {exc}")
+        print(f"An error occurred: {exc}", file=sys.stderr)
+    return 1
 
 
-if __name__ == "__main__":
-    # Replace this with the actual name of your screenshot file
-    target_image = "Skjermbilde 2026-03-29 000623.png"
-
-    # Ensure API key is present before running
-    if not os.environ.get("GEMINI_API_KEY"):
-        print("Warning: GEMINI_API_KEY environment variable is not set!")
-    else:
-        analyze_image(target_image)
+if __name__ == "__main__":  # pragma: no cover - CLI helper
+    sys.exit(main())
