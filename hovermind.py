@@ -38,11 +38,13 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
 import os
 import sys
 import threading
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import ClassVar, Optional, Type
 
 # ---------------------------------------------------------------------------
@@ -57,12 +59,29 @@ from google import genai
 from google.genai import types as genai_types
 from pynput import keyboard as pynput_keyboard
 from PyQt6.QtCore import QObject, QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPixmap, QScreen
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QKeySequenceEdit,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+    QScreen,
+)
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QFormLayout,
+    QLineEdit,
     QLabel,
     QMenu,
     QPushButton,
+    QSlider,
+    QSpinBox,
+    QTextEdit,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -83,22 +102,13 @@ logger = logging.getLogger("hovermind")
 load_dotenv()
 
 SNIPPET_SIZE: int = 500          # width/height of the captured region in px
+SNIPPET_MIN: int = 200           # minimum allowed capture size
+SNIPPET_MAX: int = 1000          # maximum allowed capture size
 TOOLTIP_MAX_WIDTH: int = 420     # maximum pixel width of the tooltip widget
 TOOLTIP_OFFSET_X: int = 20       # horizontal offset from the cursor tip
 TOOLTIP_OFFSET_Y: int = 20       # vertical offset from the cursor tip
-HOTKEY_KEYS: frozenset = frozenset(
-    {pynput_keyboard.Key.alt, pynput_keyboard.Key.shift}
-)
-# pynput reports left/right variants (e.g. Key.alt_l) rather than the generic
-# Key.alt / Key.shift on most platforms.  Normalize them so the hotkey check
-# works regardless of which physical key the user presses.
-_KEY_NORMALIZE: dict[pynput_keyboard.Key, pynput_keyboard.Key] = {
-    pynput_keyboard.Key.alt_l: pynput_keyboard.Key.alt,
-    pynput_keyboard.Key.alt_r: pynput_keyboard.Key.alt,
-    pynput_keyboard.Key.alt_gr: pynput_keyboard.Key.alt,
-    pynput_keyboard.Key.shift_l: pynput_keyboard.Key.shift,
-    pynput_keyboard.Key.shift_r: pynput_keyboard.Key.shift,
-}
+HOTKEY_KEYS: frozenset[str] = frozenset({"alt", "shift"})
+DEFAULT_HOTKEY_DISPLAY: str = "Alt+Shift"
 AI_PROMPT: str = (
     "Briefly explain what the user is pointing at in the center of this "
     "image. If it's code, explain it. If it's an image, describe it. If "
@@ -106,6 +116,160 @@ AI_PROMPT: str = (
 )
 DEBOUNCE_MS: int = int(os.environ.get("DEBOUNCE_MS", "800"))
 HOVERMIND_LOG_FILE: str = os.environ.get("HOVERMIND_LOG_FILE", "")
+CONFIG_PATH: Path = Path.home() / ".hovermind" / "config.json"
+
+
+# ---------------------------------------------------------------------------
+# Settings helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_hotkey_tokens(hotkey: Optional[str | list[str]]) -> list[str]:
+    """Return a normalized list of hotkey tokens (lowercase, trimmed)."""
+    if hotkey is None:
+        return list(HOTKEY_KEYS)
+    if isinstance(hotkey, str):
+        tokens = hotkey.split("+")
+    else:
+        tokens = list(hotkey)
+    normalized = []
+    for token in tokens:
+        token = str(token).strip().lower()
+        if not token:
+            continue
+        token = {
+            "alt_l": "alt",
+            "alt_r": "alt",
+            "alt_gr": "alt",
+            "shift_l": "shift",
+            "shift_r": "shift",
+            "ctrl_l": "ctrl",
+            "ctrl_r": "ctrl",
+            "control": "ctrl",
+            "meta": "cmd",
+            "super": "cmd",
+        }.get(token, token)
+        normalized.append(token)
+    return normalized or list(HOTKEY_KEYS)
+
+
+def _hotkey_display(tokens: list[str]) -> str:
+    """Return a human-readable display string for the hotkey tokens."""
+    if not tokens:
+        return DEFAULT_HOTKEY_DISPLAY
+    return "+".join(t.title() if len(t) > 1 else t.upper() for t in tokens)
+
+
+def _normalize_key_name(key: object) -> str:
+    """Normalize a pynput key/keycode object to a lowercase string token."""
+    if hasattr(key, "char") and getattr(key, "char") is not None:
+        return str(getattr(key, "char")).lower()
+    if hasattr(key, "name") and getattr(key, "name") is not None:
+        key_name = str(getattr(key, "name"))
+    else:
+        key_name = str(key)
+    key_name = key_name.lower()
+    return {
+        "alt_l": "alt",
+        "alt_r": "alt",
+        "alt_gr": "alt",
+        "shift_l": "shift",
+        "shift_r": "shift",
+        "ctrl_l": "ctrl",
+        "ctrl_r": "ctrl",
+        "control": "ctrl",
+        "cmd": "cmd",
+        "command": "cmd",
+        "super": "cmd",
+    }.get(key_name, key_name)
+
+
+def _clamp_snippet_size(size: int) -> int:
+    return max(SNIPPET_MIN, min(SNIPPET_MAX, int(size)))
+
+
+def build_prompt(base_prompt: str, response_language: str) -> str:
+    """Combine the base prompt with the desired response language, if any."""
+    prompt = base_prompt.strip() or AI_PROMPT
+    lang = (response_language or "").strip()
+    if lang and lang.lower() not in {"auto", "system"}:
+        prompt = f"{prompt.strip()} Respond in {lang}."
+    return prompt
+
+
+class AppSettings:
+    """Container for user-configurable settings."""
+
+    def __init__(
+        self,
+        hotkey: Optional[str | list[str]] = None,
+        snippet_size: int = SNIPPET_SIZE,
+        ai_prompt: str = AI_PROMPT,
+        theme: str = "system",
+        font_size: int = 10,
+        response_language: str = "auto",
+    ) -> None:
+        self.hotkey: list[str] = _normalize_hotkey_tokens(hotkey)
+        self.snippet_size: int = _clamp_snippet_size(snippet_size)
+        self.ai_prompt: str = ai_prompt or AI_PROMPT
+        self.theme: str = (theme or "system").lower()
+        self.font_size: int = max(8, int(font_size or 10))
+        self.response_language: str = response_language or "auto"
+
+    @classmethod
+    def defaults(cls) -> "AppSettings":
+        return cls()
+
+    def to_dict(self) -> dict:
+        return {
+            "hotkey": self.hotkey,
+            "snippet_size": self.snippet_size,
+            "ai_prompt": self.ai_prompt,
+            "theme": self.theme,
+            "font_size": self.font_size,
+            "response_language": self.response_language,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AppSettings":
+        return cls(
+            hotkey=data.get("hotkey"),
+            snippet_size=data.get("snippet_size", SNIPPET_SIZE),
+            ai_prompt=data.get("ai_prompt", AI_PROMPT),
+            theme=data.get("theme", "system"),
+            font_size=data.get("font_size", 10),
+            response_language=data.get("response_language", "auto"),
+        )
+
+
+class ConfigManager:
+    """Load and persist user settings to a JSON file."""
+
+    def __init__(self, path: Path | str = CONFIG_PATH) -> None:
+        self._path = Path(path)
+        self._settings = AppSettings.defaults()
+        self.load()
+
+    @property
+    def settings(self) -> AppSettings:
+        return self._settings
+
+    def load(self) -> AppSettings:
+        try:
+            if self._path.exists():
+                with self._path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                self._settings = AppSettings.from_dict(data or {})
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to read config file %s: %s", self._path, exc)
+            self._settings = AppSettings.defaults()
+        return self._settings
+
+    def save(self, settings: Optional[AppSettings] = None) -> None:
+        if settings:
+            self._settings = settings
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("w", encoding="utf-8") as fh:
+            json.dump(self._settings.to_dict(), fh, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +361,10 @@ class ScreenCapture:
         img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
         return img
 
+    def set_snippet_size(self, snippet_size: int) -> None:
+        """Update the capture region size."""
+        self._snippet_size = _clamp_snippet_size(snippet_size)
+
     def capture_as_bytes(self, x: int, y: int, fmt: str = "PNG") -> bytes:
         """Capture and encode the region to *bytes* in the given format.
 
@@ -227,7 +395,11 @@ class AnalyzerBase(ABC):
     provider_name: ClassVar[str]
     default_model: ClassVar[str]
 
-    def __init__(self, model_name: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        model_name: Optional[str] = None,
+        prompt: str = AI_PROMPT,
+    ) -> None:
         provider = getattr(self, "provider_name", None)
         default_model = getattr(self, "default_model", None)
         if not provider or not isinstance(provider, str):
@@ -239,10 +411,14 @@ class AnalyzerBase(ABC):
                 "Subclasses must define default_model."
             )
         self._model_name = model_name or self.default_model
+        self._prompt = prompt or AI_PROMPT
 
     @abstractmethod
     def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
         """Return a short textual explanation for the given image bytes."""
+
+    def set_prompt(self, prompt: str) -> None:
+        self._prompt = prompt or AI_PROMPT
 
 
 class GeminiAnalyzer(AnalyzerBase):
@@ -255,8 +431,9 @@ class GeminiAnalyzer(AnalyzerBase):
         self,
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
+        prompt: str = AI_PROMPT,
     ) -> None:
-        super().__init__(model_name=model_name)
+        super().__init__(model_name=model_name, prompt=prompt)
         resolved_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         if not resolved_key:
             raise ValueError(
@@ -273,7 +450,7 @@ class GeminiAnalyzer(AnalyzerBase):
             )
             response = self._client.models.generate_content(
                 model=self._model_name,
-                contents=[image_part, AI_PROMPT],
+                contents=[image_part, self._prompt],
             )
             return response.text.strip()
         except Exception as exc:
@@ -291,8 +468,9 @@ class OpenAIAnalyzer(AnalyzerBase):
         self,
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
+        prompt: str = AI_PROMPT,
     ) -> None:
-        super().__init__(model_name=model_name)
+        super().__init__(model_name=model_name, prompt=prompt)
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         if not resolved_key:
             raise ValueError(
@@ -309,7 +487,7 @@ class OpenAIAnalyzer(AnalyzerBase):
             response = self._client.chat.completions.create(
                 model=self._model_name,
                 messages=[
-                    {"role": "system", "content": AI_PROMPT},
+                    {"role": "system", "content": self._prompt},
                     {
                         "role": "user",
                         "content": [
@@ -364,8 +542,9 @@ class AnthropicAnalyzer(AnalyzerBase):
         self,
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
+        prompt: str = AI_PROMPT,
     ) -> None:
-        super().__init__(model_name=model_name)
+        super().__init__(model_name=model_name, prompt=prompt)
         resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         if not resolved_key:
             raise ValueError(
@@ -386,7 +565,7 @@ class AnthropicAnalyzer(AnalyzerBase):
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": AI_PROMPT},
+                            {"type": "text", "text": self._prompt},
                             {
                                 "type": "image",
                                 "source": {
@@ -429,8 +608,9 @@ class OllamaAnalyzer(AnalyzerBase):
         self,
         endpoint: str = "http://localhost:11434",
         model_name: Optional[str] = None,
+        prompt: str = AI_PROMPT,
     ) -> None:
-        super().__init__(model_name=model_name)
+        super().__init__(model_name=model_name, prompt=prompt)
         self._endpoint = endpoint.rstrip("/")
 
     def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
@@ -438,7 +618,7 @@ class OllamaAnalyzer(AnalyzerBase):
         url = f"{self._endpoint}/api/generate"
         payload = {
             "model": self._model_name,
-            "prompt": AI_PROMPT,
+            "prompt": self._prompt,
             "images": [encoded],
             "stream": False,
         }
@@ -472,6 +652,7 @@ class AIAnalyzer(AnalyzerBase):
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
         provider: Optional[str] = None,
+        prompt: str = AI_PROMPT,
     ) -> None:
         env_provider = os.environ.get("AI_PROVIDER")
         resolved_provider = (provider or env_provider or "gemini").lower()
@@ -486,22 +667,29 @@ class AIAnalyzer(AnalyzerBase):
             impl_cls=impl_cls,
             api_key=api_key,
             model_name=effective_model,
+            prompt=prompt,
         )
         self.provider_name = resolved_provider
         self._model_name = getattr(self._impl, "_model_name", effective_model)
+        self._prompt = prompt or AI_PROMPT
 
     def _build_impl(
         self,
         impl_cls: Type[AnalyzerBase],
         api_key: Optional[str],
         model_name: Optional[str],
+        prompt: str,
     ) -> AnalyzerBase:
         if impl_cls is OllamaAnalyzer:
-            return impl_cls(model_name=model_name)
-        return impl_cls(api_key=api_key, model_name=model_name)
+            return impl_cls(model_name=model_name, prompt=prompt)
+        return impl_cls(api_key=api_key, model_name=model_name, prompt=prompt)
 
     def analyse(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
         return self._impl.analyse(image_bytes=image_bytes, mime_type=mime_type)
+
+    def set_prompt(self, prompt: str) -> None:
+        self._prompt = prompt or AI_PROMPT
+        self._impl.set_prompt(self._prompt)
 
 
 # ===========================================================================
@@ -523,11 +711,22 @@ class FloatingTooltip(QWidget):
       keyboard shortcuts or the active application.
     """
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        theme: str = "system",
+        font_size: int = 10,
+    ) -> None:
         super().__init__(parent)
         self._current_text: str = ""
+        self._theme = theme
+        self._font_size = font_size
+        self._bg_color = QColor(30, 30, 30, 217)
+        self._fg_color = "#F0F0F0"
+        self._copy_color = "#A0A0A0"
         self._setup_window_flags()
         self._build_ui()
+        self.apply_style(theme=self._theme, font_size=self._font_size)
         self.hide()
 
     # ------------------------------------------------------------------
@@ -571,6 +770,32 @@ class FloatingTooltip(QWidget):
         layout.addWidget(self._copy_btn)
         self.setLayout(layout)
 
+    def apply_style(self, theme: str, font_size: int) -> None:
+        """Apply theme and font size preferences."""
+        theme = (theme or "system").lower()
+        self._theme = theme
+        self._font_size = font_size
+
+        if theme == "light":
+            self._bg_color = QColor(245, 245, 245, 235)
+            self._fg_color = "#1A1A1A"
+            self._copy_color = "#404040"
+        else:
+            # dark and system default to the original dark palette
+            self._bg_color = QColor(30, 30, 30, 217)
+            self._fg_color = "#F0F0F0"
+            self._copy_color = "#A0A0A0"
+
+        font = QFont("Segoe UI", max(8, int(font_size)))
+        self._label.setFont(font)
+        self._label.setStyleSheet(
+            f"color: {self._fg_color}; background: transparent;"
+        )
+        self._copy_btn.setStyleSheet(
+            f"color: {self._copy_color}; background: transparent; font-size: 9px;"
+            " border: none; text-align: left; padding: 0px;"
+        )
+
     # ------------------------------------------------------------------
     # Clipboard helper
     # ------------------------------------------------------------------
@@ -587,11 +812,10 @@ class FloatingTooltip(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        bg_color = QColor(30, 30, 30, 217)  # charcoal, ~85 % opaque
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), 10, 10)
 
-        painter.fillPath(path, bg_color)
+        painter.fillPath(path, self._bg_color)
 
     # ------------------------------------------------------------------
     # Public API
@@ -660,11 +884,13 @@ class SystemTrayIcon(QSystemTrayIcon):
     def __init__(
         self,
         controller: "MainController",
+        on_open_settings,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(self._create_icon(), parent)
         self._controller = controller
         self._paused: bool = False
+        self._on_open_settings = on_open_settings
         self._setup_menu()
         self.setToolTip("HoverMind – Hold Alt+Shift to analyse")
         self.show()
@@ -696,6 +922,10 @@ class SystemTrayIcon(QSystemTrayIcon):
 
         menu.addSeparator()
 
+        settings_action = QAction("Settings…")
+        settings_action.triggered.connect(self._on_open_settings)
+        menu.addAction(settings_action)
+
         quit_action = QAction("Quit HoverMind")
         quit_action.triggered.connect(QApplication.quit)
         menu.addAction(quit_action)
@@ -713,6 +943,101 @@ class SystemTrayIcon(QSystemTrayIcon):
             if checked
             else "HoverMind – Hold Alt+Shift to analyse"
         )
+
+
+class SettingsWindow(QWidget):
+    """Simple settings panel for user preferences."""
+
+    settings_saved = pyqtSignal(object)
+
+    def __init__(
+        self,
+        settings: AppSettings,
+        on_save,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._settings = settings
+        self.settings_saved.connect(on_save)
+        self.setWindowTitle("HoverMind Settings")
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        # Hotkey
+        self._hotkey_edit = QKeySequenceEdit()
+        self._hotkey_edit.setKeySequence(
+            QKeySequence(_hotkey_display(self._settings.hotkey))
+        )
+        form.addRow("Activation hotkey", self._hotkey_edit)
+
+        # Snippet size
+        self._snippet_slider = QSlider()
+        self._snippet_slider.setMinimum(SNIPPET_MIN)
+        self._snippet_slider.setMaximum(SNIPPET_MAX)
+        self._snippet_slider.setValue(self._settings.snippet_size)
+        form.addRow("Snippet size (px)", self._snippet_slider)
+
+        # Tooltip theme
+        self._theme_combo = QComboBox()
+        self._theme_combo.addItems(["system", "dark", "light"])
+        self._theme_combo.setCurrentText(self._settings.theme)
+        form.addRow("Tooltip theme", self._theme_combo)
+
+        # Font size
+        self._font_spin = QSpinBox()
+        self._font_spin.setMinimum(8)
+        self._font_spin.setMaximum(32)
+        self._font_spin.setValue(self._settings.font_size)
+        form.addRow("Tooltip font size", self._font_spin)
+
+        # Response language
+        self._language_combo = QComboBox()
+        self._language_combo.setEditable(True)
+        self._language_combo.addItems(["auto", "English", "French", "German", "Spanish", "Chinese"])
+        self._language_combo.setCurrentText(self._settings.response_language)
+        form.addRow("Response language", self._language_combo)
+
+        # AI prompt
+        self._prompt_edit = QTextEdit()
+        self._prompt_edit.setPlainText(self._settings.ai_prompt)
+        form.addRow("AI prompt", self._prompt_edit)
+
+        layout.addLayout(form)
+
+        btn_row = QVBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self._save_settings)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _collect_settings(self) -> AppSettings:
+        hotkey_str = self._hotkey_edit.keySequence().toString()
+        hotkey_tokens = _normalize_hotkey_tokens(hotkey_str)
+        snippet = _clamp_snippet_size(self._snippet_slider.value())
+        prompt = self._prompt_edit.toPlainText()
+        theme = self._theme_combo.currentText()
+        font_size = self._font_spin.value()
+        language = self._language_combo.currentText()
+        return AppSettings(
+            hotkey=hotkey_tokens,
+            snippet_size=snippet,
+            ai_prompt=prompt,
+            theme=theme,
+            font_size=font_size,
+            response_language=language,
+        )
+
+    def _save_settings(self) -> None:
+        settings = self._collect_settings()
+        self.settings_saved.emit(settings)
+        self.close()
 
 
 # ===========================================================================
@@ -763,16 +1088,26 @@ class MainController(QObject):
         self._debounce_ms = debounce_ms
         self._enabled: bool = True
 
-        self._capture = ScreenCapture()
+        self._config = ConfigManager()
+        self._settings: AppSettings = self._config.settings
+        self._hotkey_keys: frozenset[str] = frozenset(self._settings.hotkey)
+        self._settings_window: Optional[SettingsWindow] = None
+
+        self._capture = ScreenCapture(snippet_size=self._settings.snippet_size)
+        prompt = build_prompt(self._settings.ai_prompt, self._settings.response_language)
         self._analyzer = AIAnalyzer(
             api_key=api_key,
             provider=provider,
             model_name=model_name,
+            prompt=prompt,
         )
-        self._tooltip = FloatingTooltip()
+        self._tooltip = FloatingTooltip(
+            theme=self._settings.theme,
+            font_size=self._settings.font_size,
+        )
 
         # Hotkey state
-        self._pressed: set = set()
+        self._pressed: set[str] = set()
         self._hotkey_active: bool = False
         self._last_cursor: tuple[int, int] = (-1, -1)
         self._analysis_lock = threading.Lock()
@@ -799,7 +1134,11 @@ class MainController(QObject):
         )
 
         # System tray icon
-        self._tray = SystemTrayIcon(controller=self, parent=self)
+        self._tray = SystemTrayIcon(
+            controller=self,
+            on_open_settings=self._open_settings,
+            parent=self,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -833,22 +1172,56 @@ class MainController(QObject):
             self._hide_tooltip.emit()
         logger.info("HoverMind %s.", "enabled" if enabled else "paused")
 
+    def _open_settings(self) -> None:
+        """Show the settings window."""
+        if self._settings_window is not None:
+            try:
+                self._settings_window.close()
+            except Exception:
+                pass
+        self._settings_window = SettingsWindow(
+            settings=self._settings,
+            on_save=self._apply_settings,
+        )
+        self._settings_window.show()
+        self._settings_window.raise_()
+
+    def _apply_settings(self, settings: AppSettings) -> None:
+        """Persist settings and apply them to live components."""
+        self._settings = settings
+        self._config.save(settings)
+
+        self._hotkey_keys = frozenset(self._settings.hotkey)
+        self._pressed.clear()
+
+        self._capture.set_snippet_size(self._settings.snippet_size)
+        self._tooltip.apply_style(
+            theme=self._settings.theme,
+            font_size=self._settings.font_size,
+        )
+
+        prompt = build_prompt(
+            self._settings.ai_prompt,
+            self._settings.response_language,
+        )
+        self._analyzer.set_prompt(prompt)
+
     # ------------------------------------------------------------------
     # Key event handlers (pynput background thread)
     # ------------------------------------------------------------------
 
     def _on_key_press(self, key: pynput_keyboard.Key) -> None:
-        key = _KEY_NORMALIZE.get(key, key)
-        self._pressed.add(key)
+        key_name = _normalize_key_name(key)
+        self._pressed.add(key_name)
         was_active = self._hotkey_active
-        self._hotkey_active = HOTKEY_KEYS.issubset(self._pressed)
+        self._hotkey_active = self._hotkey_keys.issubset(self._pressed)
         if self._hotkey_active and not was_active:
             logger.debug("Hotkey activated.")
 
     def _on_key_release(self, key: pynput_keyboard.Key) -> None:
-        key = _KEY_NORMALIZE.get(key, key)
-        self._pressed.discard(key)
-        if not HOTKEY_KEYS.issubset(self._pressed):
+        key_name = _normalize_key_name(key)
+        self._pressed.discard(key_name)
+        if not self._hotkey_keys.issubset(self._pressed):
             if self._hotkey_active:
                 logger.debug("Hotkey deactivated.")
             self._hotkey_active = False

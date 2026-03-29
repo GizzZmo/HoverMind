@@ -217,6 +217,10 @@ def _make_pyqt6_stub():
         class RenderHint:
             Antialiasing = 0
 
+        class Orientation:
+            Horizontal = 0
+            Vertical = 1
+
     class _QObject:
         def __init__(self, *args, **kwargs):
             pass
@@ -353,10 +357,102 @@ def _make_pyqt6_stub():
         def addWidget(self, w):
             pass
 
+        def addLayout(self, layout):
+            pass
+
+    class _QFormLayout:
+        def __init__(self, *args):
+            pass
+
+        def addRow(self, *args):
+            pass
+
+    class _QLineEdit:
+        def __init__(self, *args):
+            self._text = ""
+
+        def setText(self, text):
+            self._text = text
+
+        def text(self):
+            return self._text
+
+    class _QTextEdit:
+        def __init__(self, *args):
+            self._text = ""
+
+        def setPlainText(self, text):
+            self._text = text
+
+        def toPlainText(self):
+            return self._text
+
+    class _QComboBox:
+        def __init__(self, *args):
+            self._items = []
+            self._current = ""
+            self._editable = False
+
+        def addItems(self, items):
+            self._items.extend(items)
+            if items and not self._current:
+                self._current = items[0]
+
+        def setEditable(self, editable):
+            self._editable = editable
+
+        def setCurrentText(self, text):
+            self._current = text
+
+        def currentText(self):
+            return self._current
+
+    class _QSlider:
+        def __init__(self, *args):
+            self._min = 0
+            self._max = 100
+            self._value = 0
+
+        def setMinimum(self, v):
+            self._min = v
+
+        def setMaximum(self, v):
+            self._max = v
+
+        def setValue(self, v):
+            self._value = v
+
+        def value(self):
+            return self._value
+
+    class _QSpinBox:
+        def __init__(self, *args):
+            self._value = 0
+            self._min = 0
+            self._max = 0
+
+        def setMinimum(self, v):
+            self._min = v
+
+        def setMaximum(self, v):
+            self._max = v
+
+        def setValue(self, v):
+            self._value = v
+
+        def value(self):
+            return self._value
+
     widgets.QApplication = _QApplication
     widgets.QWidget = _QWidget
     widgets.QLabel = _QLabel
     widgets.QVBoxLayout = _QVBoxLayout
+    widgets.QFormLayout = _QFormLayout
+    widgets.QLineEdit = _QLineEdit
+    widgets.QTextEdit = _QTextEdit
+    widgets.QComboBox = _QComboBox
+    widgets.QSlider = _QSlider
+    widgets.QSpinBox = _QSpinBox
 
     class _QPushButton:
         def __init__(self, *args):
@@ -458,6 +554,23 @@ def _make_pyqt6_stub():
             p.y.return_value = 540
             return p
 
+    class _QKeySequence:
+        def __init__(self, seq=""):
+            self._seq = seq
+
+        def toString(self):
+            return self._seq
+
+    class _QKeySequenceEdit:
+        def __init__(self, *args):
+            self._seq = _QKeySequence()
+
+        def setKeySequence(self, seq):
+            self._seq = seq
+
+        def keySequence(self):
+            return self._seq
+
     class _QAction:
         def __init__(self, *args, **kwargs):
             self.triggered = MagicMock()
@@ -495,6 +608,8 @@ def _make_pyqt6_stub():
     gui.QAction = _QAction
     gui.QIcon = _QIcon
     gui.QPixmap = _QPixmap
+    gui.QKeySequence = _QKeySequence
+    gui.QKeySequenceEdit = _QKeySequenceEdit
 
     pyqt6.QtCore = core
     pyqt6.QtWidgets = widgets
@@ -946,6 +1061,85 @@ class TestFloatingTooltipCopy(unittest.TestCase):
         """_copy_to_clipboard must not raise after show_text has been called."""
         self._tooltip.show_text("AI response text", 500, 300)
         self._tooltip._copy_to_clipboard()  # should be silent
+
+
+class TestAppSettings(unittest.TestCase):
+    """Tests for settings normalisation and clamping (roadmap 4.x)."""
+
+    def test_hotkey_normalises_tokens(self):
+        settings = hovermind.AppSettings(hotkey="Ctrl+Alt")
+        self.assertEqual(settings.hotkey, ["ctrl", "alt"])
+
+    def test_snippet_size_is_clamped(self):
+        settings = hovermind.AppSettings(snippet_size=10)
+        self.assertEqual(settings.snippet_size, hovermind.SNIPPET_MIN)
+
+
+class TestConfigManager(unittest.TestCase):
+    """Ensure config round-trips to disk."""
+
+    def test_save_and_load_round_trip(self):
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.json")
+            cfg = hovermind.ConfigManager(path=cfg_path)
+            settings = hovermind.AppSettings(
+                hotkey=["ctrl", "h"],
+                snippet_size=260,
+                ai_prompt="Always reply in tests",
+                theme="light",
+                font_size=12,
+                response_language="French",
+            )
+            cfg.save(settings)
+            loaded = cfg.load()
+
+        self.assertEqual(loaded.hotkey, ["ctrl", "h"])
+        self.assertEqual(loaded.snippet_size, 260)
+        self.assertEqual(loaded.response_language, "French")
+        self.assertEqual(loaded.ai_prompt, "Always reply in tests")
+
+
+class TestPromptBuilder(unittest.TestCase):
+    """Tests for prompt construction with language preference."""
+
+    def test_appends_language_when_provided(self):
+        prompt = hovermind.build_prompt("Explain", "Spanish")
+        self.assertIn("Spanish", prompt)
+
+    def test_auto_language_keeps_prompt(self):
+        prompt = hovermind.build_prompt("Explain", "auto")
+        self.assertEqual(prompt, "Explain")
+
+
+class TestCustomHotkeyController(unittest.TestCase):
+    """Controller must respect settings from the config manager."""
+
+    def test_controller_uses_custom_hotkey_and_snippet(self):
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.json")
+            cfg = hovermind.ConfigManager(path=cfg_path)
+            custom_settings = hovermind.AppSettings(
+                hotkey=["ctrl", "h"],
+                snippet_size=220,
+                ai_prompt="Custom",
+                theme="dark",
+                font_size=11,
+                response_language="German",
+            )
+            cfg.save(custom_settings)
+            app = qt_widgets.QApplication([])
+            with patch.object(hovermind, "ConfigManager", return_value=cfg):
+                ctrl = hovermind.MainController(app, api_key="fake-key")
+
+        self.assertEqual(ctrl._hotkey_keys, frozenset(["ctrl", "h"]))
+        self.assertEqual(ctrl._capture._snippet_size, 220)
+        self.assertIn("German", ctrl._analyzer._prompt)
 
 
 if __name__ == "__main__":

@@ -61,13 +61,13 @@ A lightweight settings panel that eliminates the need to edit source files.
 
 | # | Feature | Status |
 |---|---------|--------|
-| 4.1 | **Settings window** — accessible from the tray icon; persists to `~/.hovermind/config.json` | 📋 |
-| 4.2 | **Custom hotkey** — user-configurable key combination (not just Alt+Shift) | 📋 |
-| 4.3 | **Custom AI prompt** — let users write their own system prompt (e.g. "Always reply in French") | 📋 |
-| 4.4 | **Snippet size control** — slider for 200 px–1000 px capture region | 📋 |
-| 4.5 | **Tooltip theme** — light / dark / system preference | 📋 |
-| 4.6 | **Tooltip font size** — configurable label font size | 📋 |
-| 4.7 | **Response language** — dropdown to request explanations in any language | 📋 |
+| 4.1 | **Settings window** — accessible from the tray icon; persists to `~/.hovermind/config.json` | ✅ |
+| 4.2 | **Custom hotkey** — user-configurable key combination (not just Alt+Shift) | ✅ |
+| 4.3 | **Custom AI prompt** — let users write their own system prompt (e.g. "Always reply in French") | ✅ |
+| 4.4 | **Snippet size control** — slider for 200 px–1000 px capture region | ✅ |
+| 4.5 | **Tooltip theme** — light / dark / system preference | ✅ |
+| 4.6 | **Tooltip font size** — configurable label font size | ✅ |
+| 4.7 | **Response language** — dropdown to request explanations in any language | ✅ |
 
 ---
 

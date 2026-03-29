@@ -35,6 +35,7 @@ HoverMind turns your mouse pointer into a context-aware AI assistant. Hold **Alt
 | Feature | Details |
 |---------|---------|
 | **Multi-provider AI** | Plug in Google Gemini (default), OpenAI GPT-4o Vision, Anthropic Claude Vision, or local Ollama models via `AI_PROVIDER` / `AI_MODEL` |
+| **Settings panel** | Tray-accessible window that persists to `~/.hovermind/config.json` for hotkey, prompt, snippet size (200–1000 px), tooltip theme, font size, and response language |
 | **Universal vision** | Explain code snippets, UI icons, error messages, foreign-language text, diagrams, photos — anything visible on screen |
 | **Unobtrusive overlay** | Frameless, semi-transparent, always-on-top tooltip that never steals focus or appears in Alt-Tab |
 | **DPI-aware capture** | Calls `SetProcessDpiAwareness(2)` at startup so coordinates are always physical pixels on any monitor scaling |
@@ -155,18 +156,18 @@ For a deeper dive see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## ⚙️ Configuration Reference
 
-All runtime behaviour can be tuned via the module-level constants in `hovermind.py` or overridden with environment variables.
+Most runtime behaviour is available in the **Settings** window (right-click the tray icon → **Settings…**). Your choices are saved to `~/.hovermind/config.json` so they persist between launches.
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `SNIPPET_SIZE` | `500` | Width and height (px) of the screen region captured around the cursor |
-| `TOOLTIP_MAX_WIDTH` | `420` | Maximum pixel width of the tooltip widget before text wraps |
-| `TOOLTIP_OFFSET_X` | `20` | Horizontal gap between the cursor tip and the left edge of the tooltip |
-| `TOOLTIP_OFFSET_Y` | `20` | Vertical gap between the cursor tip and the top edge of the tooltip |
-| `HOTKEY_KEYS` | `{Alt, Shift}` | Set of keys that must all be held to activate HoverMind |
-| `AI_PROMPT` | *(see source)* | System prompt sent to the active provider along with every screenshot |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Activation hotkey | `Alt+Shift` | Any key combo; normalised to work with left/right variants |
+| Snippet size | `500 px` | Slider (200–1000 px) for the captured square region |
+| Tooltip theme | `System (dark)` | Light / dark / system preference |
+| Tooltip font size | `10 px` | Label font size |
+| AI prompt | *(concise explainer prompt)* | Full system prompt text sent to the provider |
+| Response language | `auto` | Request responses in a specific language (e.g. French, German) |
 
-### Environment variables
+Environment variables still apply (useful for headless runs or CI) and override the defaults where relevant.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -200,7 +201,9 @@ All runtime behaviour can be tuned via the module-level constants in `hovermind.
 
 4. **Release** either key to dismiss the tooltip.
 
-5. Press **Ctrl + C** in the terminal (or close it) to quit.
+5. Right-click the tray icon → **Settings…** to customise the hotkey, snippet size, prompt, theme, font size, or response language.
+
+6. Press **Ctrl + C** in the terminal (or close it) to quit.
 
 ### What can HoverMind explain?
 
