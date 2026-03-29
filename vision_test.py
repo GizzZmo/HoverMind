@@ -38,7 +38,11 @@ def analyze_image(
     model_name: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> str:
-    """Send an image to the Gemini Vision API and return the analysis text."""
+    """Send an image to the Gemini Vision API and return the analysis text.
+
+    Model precedence: explicit ``model_name`` argument → ``AI_MODEL`` env var →
+    :class:`hovermind.GeminiAnalyzer` default.
+    """
     resolved_key = api_key or os.environ.get("GEMINI_API_KEY")
     if not resolved_key:
         raise ValueError("GEMINI_API_KEY is not set.")
@@ -75,7 +79,6 @@ def main() -> int:
 
     try:
         result = analyze_image(args.image, model_name=args.model)
-        print(f"Successfully analyzed image from: {args.image}")
         print("HoverMind AI Analysis (Gemini Vision):")
         print("-" * 30)
         print(result)
