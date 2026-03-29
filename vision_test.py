@@ -11,7 +11,7 @@ from hovermind import AI_PROMPT, GeminiAnalyzer
 
 
 ImageSource = Union[str, os.PathLike, Image.Image, bytes, bytearray]
-"""Supported image inputs for :func:`analyze_image`."""
+"""Supported image inputs for the analyze_image function."""
 ANALYSIS_HEADING = "HoverMind AI Analysis:"
 
 
@@ -49,7 +49,9 @@ def analyze_image(
     if not resolved_key:
         raise ValueError("GEMINI_API_KEY is not set.")
 
-    if model_name and str(model_name).strip():
+    if model_name is not None:
+        if not model_name.strip():
+            raise ValueError("Model name must not be empty.")
         model = model_name
     else:
         env_model = os.environ.get("AI_MODEL", "").strip()
