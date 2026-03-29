@@ -79,7 +79,7 @@ def main() -> int:
 
     try:
         result = analyze_image(args.image, model_name=args.model)
-        print("HoverMind AI Analysis (Gemini Vision):")
+        print("HoverMind AI Analysis:")
         print("-" * 30)
         print(result)
         print("-" * 30)
