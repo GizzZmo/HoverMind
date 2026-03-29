@@ -11,6 +11,7 @@ from hovermind import AI_PROMPT, GeminiAnalyzer
 
 
 ImageSource = Union[str, os.PathLike, Image.Image, bytes, bytearray]
+ANALYSIS_HEADING = "HoverMind AI Analysis:"
 
 
 def _load_image(source: ImageSource) -> Image.Image:
@@ -79,7 +80,7 @@ def main() -> int:
 
     try:
         result = analyze_image(args.image, model_name=args.model)
-        print("HoverMind AI Analysis:")
+        print(ANALYSIS_HEADING)
         print("-" * 30)
         print(result)
         print("-" * 30)
