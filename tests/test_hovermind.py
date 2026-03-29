@@ -1179,6 +1179,23 @@ class TestSettingsWindow(unittest.TestCase):
             hovermind.Qt.Orientation.Horizontal,
         )
 
+    def test_collect_settings_reflects_controls(self):
+        app = qt_widgets.QApplication([])
+        settings = hovermind.AppSettings(
+            hotkey=["ctrl", "shift"],
+            snippet_size=275,
+            ai_prompt="Explain briefly",
+            theme="light",
+            font_size=14,
+            response_language="Spanish",
+        )
+        window = hovermind.SettingsWindow(settings=settings, on_save=lambda *_: None)
+        collected = window._collect_settings()
+        self.assertEqual(collected.snippet_size, 275)
+        self.assertEqual(collected.theme, "light")
+        self.assertEqual(collected.font_size, 14)
+        self.assertEqual(collected.response_language, "Spanish")
+
 
 if __name__ == "__main__":
     unittest.main()

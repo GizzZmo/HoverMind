@@ -192,6 +192,14 @@ def _clamp_snippet_size(size: int) -> int:
     return max(SNIPPET_MIN, min(SNIPPET_MAX, int(size)))
 
 
+def _clamp_font_size(size: Optional[int]) -> int:
+    try:
+        value = int(size) if size is not None else 10
+    except Exception:
+        value = 10
+    return max(8, value)
+
+
 def build_prompt(base_prompt: str, response_language: str) -> str:
     """Combine the base prompt with the desired response language, if any."""
     prompt = base_prompt.strip() or AI_PROMPT
@@ -217,7 +225,7 @@ class AppSettings:
         self.snippet_size: int = _clamp_snippet_size(snippet_size)
         self.ai_prompt: str = ai_prompt or AI_PROMPT
         self.theme: str = (theme or "system").lower()
-        self.font_size: int = max(8, int(font_size if font_size is not None else 10))
+        self.font_size: int = _clamp_font_size(font_size)
         self.response_language: str = response_language or "auto"
 
     @classmethod
@@ -792,7 +800,7 @@ class FloatingTooltip(QWidget):
             self._copy_color = "#A0A0A0"
 
         font = QFont()
-        font.setPointSize(max(8, int(font_size)))
+        font.setPointSize(_clamp_font_size(font_size))
         self._label.setFont(font)
         self._label.setStyleSheet(
             f"color: {self._fg_color}; background: transparent;"
