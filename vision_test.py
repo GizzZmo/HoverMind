@@ -10,7 +10,10 @@ from PIL import Image
 from hovermind import AI_PROMPT, GeminiAnalyzer
 
 
-# Supported image inputs for the analyze_image function.
+# Supported image inputs for analyze_image:
+# - str / PathLike: filesystem path to an image file
+# - Image.Image: already-loaded in-memory image (e.g., from screen grabber)
+# - bytes / bytearray: raw encoded image data
 ImageSource = Union[str, os.PathLike, Image.Image, bytes, bytearray]
 ANALYSIS_HEADING = "HoverMind AI Analysis:"
 
@@ -65,7 +68,10 @@ def analyze_image(
     )
     text = (response.text or "").strip()
     if not text:
-        raise ValueError("Gemini API returned an empty text response.")
+        raise ValueError(
+            "Gemini API returned an empty text response (possible API issue, "
+            "content policy rejection, or unsupported image format)."
+        )
     return text
 
 
