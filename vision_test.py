@@ -49,6 +49,8 @@ def analyze_image(
         raise ValueError("GEMINI_API_KEY is not set.")
 
     model = model_name or os.environ.get("AI_MODEL") or GeminiAnalyzer.default_model
+    if not model:
+        raise ValueError("A Gemini model name must be provided.")
     client = genai.Client(api_key=resolved_key)
     img = _load_image(image)
 
@@ -56,7 +58,10 @@ def analyze_image(
         model=model,
         contents=[img, AI_PROMPT],
     )
-    return (response.text or "").strip()
+    text = (response.text or "").strip()
+    if not text:
+        raise ValueError("Gemini API returned no text.")
+    return text
 
 
 def _parse_args() -> argparse.Namespace:
