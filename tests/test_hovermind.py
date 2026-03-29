@@ -574,16 +574,6 @@ def _make_pyqt6_stub():
         def toString(self):
             return self._seq
 
-    class _QKeySequenceEdit:
-        def __init__(self, *args):
-            self._seq = _QKeySequence()
-
-        def setKeySequence(self, seq):
-            self._seq = seq
-
-        def keySequence(self):
-            return self._seq
-
     class _QAction:
         def __init__(self, *args, **kwargs):
             self.triggered = MagicMock()
@@ -622,7 +612,18 @@ def _make_pyqt6_stub():
     gui.QIcon = _QIcon
     gui.QPixmap = _QPixmap
     gui.QKeySequence = _QKeySequence
-    gui.QKeySequenceEdit = _QKeySequenceEdit
+
+    class _QKeySequenceEdit:
+        def __init__(self, *args):
+            self._seq = _QKeySequence()
+
+        def setKeySequence(self, seq):
+            self._seq = seq
+
+        def keySequence(self):
+            return self._seq
+
+    widgets.QKeySequenceEdit = _QKeySequenceEdit
 
     pyqt6.QtCore = core
     pyqt6.QtWidgets = widgets
