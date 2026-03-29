@@ -1085,6 +1085,7 @@ class TestAppSettings(unittest.TestCase):
 
     def test_snippet_size_is_clamped(self):
         settings = hovermind.AppSettings(snippet_size=10)
+        self.assertLess(10, hovermind.SNIPPET_MIN)
         self.assertEqual(settings.snippet_size, hovermind.SNIPPET_MIN)
 
     def test_hotkey_strips_whitespace_and_duplicates(self):
@@ -1093,6 +1094,7 @@ class TestAppSettings(unittest.TestCase):
 
     def test_snippet_size_clamps_upper_bound(self):
         settings = hovermind.AppSettings(snippet_size=10_000)
+        self.assertGreater(10_000, hovermind.SNIPPET_MAX)
         self.assertEqual(settings.snippet_size, hovermind.SNIPPET_MAX)
 
     def test_hotkey_ignores_empty_tokens(self):
