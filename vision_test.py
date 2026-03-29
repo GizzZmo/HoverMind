@@ -14,7 +14,11 @@ ImageSource = Union[str, os.PathLike, Image.Image, bytes, bytearray]
 
 
 def _load_image(source: ImageSource) -> Image.Image:
-    """Return a PIL Image from a path, bytes, or already-open image."""
+    """Return a PIL Image from a path, bytes, or already-open image.
+
+    When reading from disk/bytes we copy the image so the caller can safely use
+    it after the underlying file/stream handle is closed.
+    """
     if isinstance(source, Image.Image):
         return source
     if isinstance(source, (str, os.PathLike)):
@@ -73,9 +77,9 @@ def main() -> int:
         return 1
 
     try:
-        print(f"Loading image from: {args.image}...")
-        print("Sending to Gemini Vision API... 🧠\n")
         result = analyze_image(args.image, model_name=args.model)
+        print(f"Loaded image from: {args.image}")
+        print("Sending to Gemini Vision API... 🧠\n")
         print("HoverMind AI Analysis:")
         print("-" * 30)
         print(result)
