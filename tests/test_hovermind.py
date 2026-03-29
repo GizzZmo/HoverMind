@@ -1074,6 +1074,14 @@ class TestAppSettings(unittest.TestCase):
         settings = hovermind.AppSettings(snippet_size=10)
         self.assertEqual(settings.snippet_size, hovermind.SNIPPET_MIN)
 
+    def test_hotkey_strips_whitespace_and_duplicates(self):
+        settings = hovermind.AppSettings(hotkey=" Alt + Alt + Shift ")
+        self.assertEqual(settings.hotkey, ["alt", "shift"])
+
+    def test_snippet_size_clamps_upper_bound(self):
+        settings = hovermind.AppSettings(snippet_size=10_000)
+        self.assertEqual(settings.snippet_size, hovermind.SNIPPET_MAX)
+
 
 class TestConfigManager(unittest.TestCase):
     """Ensure config round-trips to disk."""

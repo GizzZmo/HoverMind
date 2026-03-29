@@ -107,8 +107,9 @@ SNIPPET_MAX: int = 1000          # maximum allowed capture size
 TOOLTIP_MAX_WIDTH: int = 420     # maximum pixel width of the tooltip widget
 TOOLTIP_OFFSET_X: int = 20       # horizontal offset from the cursor tip
 TOOLTIP_OFFSET_Y: int = 20       # vertical offset from the cursor tip
-HOTKEY_KEYS: frozenset[str] = frozenset({"alt", "shift"})
+DEFAULT_HOTKEY_TOKENS: frozenset[str] = frozenset({"alt", "shift"})
 DEFAULT_HOTKEY_DISPLAY: str = "Alt+Shift"
+DEFAULT_LANGUAGES: list[str] = ["auto", "English", "French", "German", "Spanish", "Chinese"]
 AI_PROMPT: str = (
     "Briefly explain what the user is pointing at in the center of this "
     "image. If it's code, explain it. If it's an image, describe it. If "
@@ -126,12 +127,13 @@ CONFIG_PATH: Path = Path.home() / ".hovermind" / "config.json"
 def _normalize_hotkey_tokens(hotkey: Optional[str | list[str]]) -> list[str]:
     """Return a normalized list of hotkey tokens (lowercase, trimmed)."""
     if hotkey is None:
-        return list(HOTKEY_KEYS)
+        return list(DEFAULT_HOTKEY_TOKENS)
     if isinstance(hotkey, str):
         tokens = hotkey.split("+")
     else:
         tokens = list(hotkey)
-    normalized = []
+    normalized: list[str] = []
+    seen: set[str] = set()
     for token in tokens:
         token = str(token).strip().lower()
         if not token:
@@ -148,8 +150,11 @@ def _normalize_hotkey_tokens(hotkey: Optional[str | list[str]]) -> list[str]:
             "meta": "cmd",
             "super": "cmd",
         }.get(token, token)
+        if token in seen:
+            continue
+        seen.add(token)
         normalized.append(token)
-    return normalized or list(HOTKEY_KEYS)
+    return normalized or list(DEFAULT_HOTKEY_TOKENS)
 
 
 def _hotkey_display(tokens: list[str]) -> str:
@@ -217,7 +222,7 @@ class AppSettings:
 
     @classmethod
     def defaults(cls) -> "AppSettings":
-        return cls()
+        return cls(hotkey=list(DEFAULT_HOTKEY_TOKENS))
 
     def to_dict(self) -> dict:
         return {
@@ -994,7 +999,7 @@ class SettingsWindow(QWidget):
         # Response language
         self._language_combo = QComboBox()
         self._language_combo.setEditable(True)
-        self._language_combo.addItems(["auto", "English", "French", "German", "Spanish", "Chinese"])
+        self._language_combo.addItems(DEFAULT_LANGUAGES)
         self._language_combo.setCurrentText(self._settings.response_language)
         form.addRow("Response language", self._language_combo)
 
