@@ -977,7 +977,7 @@ class SettingsWindow(QWidget):
         form.addRow("Activation hotkey", self._hotkey_edit)
 
         # Snippet size
-        self._snippet_slider = QSlider()
+        self._snippet_slider = QSlider(Qt.Orientation.Horizontal)
         self._snippet_slider.setMinimum(SNIPPET_MIN)
         self._snippet_slider.setMaximum(SNIPPET_MAX)
         self._snippet_slider.setValue(self._settings.snippet_size)

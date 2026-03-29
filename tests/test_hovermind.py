@@ -301,6 +301,9 @@ def _make_pyqt6_stub():
         def setWindowFlags(self, flags):
             pass
 
+        def setWindowTitle(self, title):
+            self._title = title
+
         def setAttribute(self, attr, val=True):
             pass
 
@@ -324,6 +327,9 @@ def _make_pyqt6_stub():
 
         def raise_(self):
             pass
+
+        def close(self):
+            self._visible = False
 
         def hide(self):
             self._visible = False
@@ -412,6 +418,7 @@ def _make_pyqt6_stub():
             self._min = 0
             self._max = 100
             self._value = 0
+            self._orientation = args[0] if args else None
 
         def setMinimum(self, v):
             self._min = v
@@ -424,6 +431,9 @@ def _make_pyqt6_stub():
 
         def value(self):
             return self._value
+
+        def orientation(self):
+            return self._orientation
 
     class _QSpinBox:
         def __init__(self, *args):
@@ -1148,6 +1158,19 @@ class TestCustomHotkeyController(unittest.TestCase):
         self.assertEqual(ctrl._hotkey_keys, frozenset(["ctrl", "h"]))
         self.assertEqual(ctrl._capture._snippet_size, 220)
         self.assertIn("German", ctrl._analyzer._prompt)
+
+
+class TestSettingsWindow(unittest.TestCase):
+    """Ensure settings UI initialises controls with expected defaults."""
+
+    def test_snippet_slider_horizontal(self):
+        app = qt_widgets.QApplication([])
+        settings = hovermind.AppSettings()
+        window = hovermind.SettingsWindow(settings=settings, on_save=lambda *_: None)
+        self.assertEqual(
+            getattr(window._snippet_slider, "orientation")(),
+            hovermind.Qt.Orientation.Horizontal,
+        )
 
 
 if __name__ == "__main__":
