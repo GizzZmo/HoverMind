@@ -6,14 +6,16 @@ This document provides a detailed description of HoverMind's internal design, da
 
 ## Overview
 
-HoverMind is a single-file Python application (`hovermind.py`) composed of four classes, each with a clearly bounded responsibility:
+HoverMind is a single-file Python application (`hovermind.py`) composed of modular classes, each with a clearly bounded responsibility:
 
 ```
 hovermind.py
 ├── ScreenCapture       — screenshot acquisition
 ├── AIAnalyzer          — provider-agnostic facade (Gemini / OpenAI / Anthropic / Ollama)
 ├── FloatingTooltip     — PyQt6 overlay widget
-└── MainController      — orchestration + lifecycle
+├── MainController      — orchestration + lifecycle
+├── ConfigManager       — persisted settings (hotkey, prompt, theme, etc.)
+└── SettingsWindow      — tray-accessible GUI for preferences
 ```
 
 The application runs exactly two threads:
@@ -35,10 +37,11 @@ main()
   ├─ QApplication(sys.argv)
   │    └─ setQuitOnLastWindowClosed(False)   ← keep alive when tooltip closes
   │
+  ├─ ConfigManager().load()                 ← load ~/.hovermind/config.json (or defaults)
   ├─ MainController(app)
-  │    ├─ ScreenCapture()
-  │    ├─ AIAnalyzer(api_key)               ← raises ValueError if no key
-  │    ├─ FloatingTooltip()                 ← hidden QWidget
+  │    ├─ ScreenCapture(snippet_size from settings)
+  │    ├─ AIAnalyzer(api_key, prompt from settings)
+  │    ├─ FloatingTooltip(theme + font size from settings)
   │    ├─ QTimer (debounce, single-shot)
   │    ├─ QTimer (poll, 100 ms interval)
   │    └─ pynput Listener (not yet started)
@@ -203,6 +206,11 @@ A `threading.Lock` guards `_analysis_running`. If a previous analysis is still i
 |--------|-----------|---------|
 | `_update_tooltip(str, int, int)` | worker → GUI | Show the AI result in the tooltip |
 | `_hide_tooltip()` | listener → GUI | Hide the tooltip when the hotkey is released |
+
+### Settings persistence
+
+- `ConfigManager` loads/saves `~/.hovermind/config.json` and exposes an `AppSettings` instance (hotkey, snippet size, AI prompt, theme, font size, response language).
+- `SettingsWindow` is launched from the tray icon and writes preferences via `ConfigManager.save()`. On save, `MainController` reapplies hotkey detection, tooltip styling, capture size, and analyzer prompt without restarting the app.
 
 ---
 
