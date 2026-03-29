@@ -72,21 +72,19 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
-    if not os.environ.get("GEMINI_API_KEY"):
-        print("Error: GEMINI_API_KEY environment variable is not set.", file=sys.stderr)
-        return 1
 
     try:
         result = analyze_image(args.image, model_name=args.model)
-        print(f"Loaded image from: {args.image}")
-        print("Sending to Gemini Vision API... 🧠\n")
-        print("HoverMind AI Analysis:")
+        print(f"Successfully analyzed image from: {args.image}")
+        print("HoverMind AI Analysis (Gemini Vision):")
         print("-" * 30)
         print(result)
         print("-" * 30)
         return 0
     except FileNotFoundError:
         print(f"Error: Could not find the image file '{args.image}'.", file=sys.stderr)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
     except Exception as exc:  # pragma: no cover - demo helper
         print(f"An error occurred: {exc}", file=sys.stderr)
     return 1
