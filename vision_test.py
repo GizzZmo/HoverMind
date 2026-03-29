@@ -10,8 +10,8 @@ from PIL import Image
 from hovermind import AI_PROMPT, GeminiAnalyzer
 
 
+# Supported image inputs for the analyze_image function.
 ImageSource = Union[str, os.PathLike, Image.Image, bytes, bytearray]
-"""Supported image inputs for the analyze_image function."""
 ANALYSIS_HEADING = "HoverMind AI Analysis:"
 
 
@@ -56,8 +56,6 @@ def analyze_image(
     else:
         env_model = os.environ.get("AI_MODEL", "").strip()
         model = env_model or GeminiAnalyzer.default_model
-    if not model:
-        raise ValueError("A Gemini model name must be provided.")
     client = genai.Client(api_key=resolved_key)
     img = _load_image(image)
 
@@ -67,7 +65,7 @@ def analyze_image(
     )
     text = (response.text or "").strip()
     if not text:
-        raise ValueError("Gemini API returned no text.")
+        raise ValueError("Gemini API returned an empty text response.")
     return text
 
 
