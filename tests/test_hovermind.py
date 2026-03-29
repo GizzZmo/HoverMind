@@ -522,7 +522,10 @@ def _make_pyqt6_stub():
 
     class _QFont:
         def __init__(self, *args):
-            pass
+            self._size = args[1] if len(args) > 1 else 10
+
+        def setPointSize(self, size):
+            self._size = size
 
     class _QPainter:
         class RenderHint:
@@ -1091,6 +1094,10 @@ class TestAppSettings(unittest.TestCase):
     def test_snippet_size_clamps_upper_bound(self):
         settings = hovermind.AppSettings(snippet_size=10_000)
         self.assertEqual(settings.snippet_size, hovermind.SNIPPET_MAX)
+
+    def test_hotkey_ignores_empty_tokens(self):
+        settings = hovermind.AppSettings(hotkey="Alt++Shift")
+        self.assertEqual(settings.hotkey, ["alt", "shift"])
 
 
 class TestConfigManager(unittest.TestCase):

@@ -217,7 +217,7 @@ class AppSettings:
         self.snippet_size: int = _clamp_snippet_size(snippet_size)
         self.ai_prompt: str = ai_prompt or AI_PROMPT
         self.theme: str = (theme or "system").lower()
-        self.font_size: int = max(8, int(font_size or 10))
+        self.font_size: int = max(8, int(font_size if font_size is not None else 10))
         self.response_language: str = response_language or "auto"
 
     @classmethod
@@ -791,7 +791,8 @@ class FloatingTooltip(QWidget):
             self._fg_color = "#F0F0F0"
             self._copy_color = "#A0A0A0"
 
-        font = QFont("Segoe UI", max(8, int(font_size)))
+        font = QFont()
+        font.setPointSize(max(8, int(font_size)))
         self._label.setFont(font)
         self._label.setStyleSheet(
             f"color: {self._fg_color}; background: transparent;"
